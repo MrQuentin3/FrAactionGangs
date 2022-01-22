@@ -888,6 +888,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             _nftsIds.length + 
             _realmsIds.length + 
             _itemsIds.length +
+            _itemsQuantity.length +
             _ticketsQuantity.length + 
             _extNftsIds.length + 
             _extNftsAddress.length +
@@ -1362,20 +1363,20 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         uint256 startIndex;
         uint256 endIndex = realmsIds.length;
-        uint256 max = ISettings(settingsContract).maxNftArrayLength();
         if (split == 0) {
-            if (realmsIds.length > max &&
-                demergerStatus == DemergerStatus.ACTIVE
-            ) {
-                if (realmsIds.length % max > 0) {
-                    multiple = realmsIds.length / max + 1;
-                } else {
-                    multiple = realmsIds.length / max;
+            maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
+            if (realmsIds.length > max) {
+                endIndex = max;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (realmsIds.length % max > 0) {
+                        multiple = realmsIds.length / max + 1;
+                    } else {
+                        multiple = realmsIds.length / max;
+                    }
+                    split = 1;
+                    splitCounter++;
                 }
-                split = 1;
-                splitCounter++;
             }
-            endIndex = max;
         } else {
             } else {
             if (realmsIds.length % max > 0 && splitCounter >= multiple - 1) {
@@ -1449,20 +1450,20 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         uint256 startIndex;
         uint256 endIndex = nftsIds.length;
-        uint256 max = ISettings(settingsContract).maxNftArrayLength();
         if (split == 0) {
-            if (nftIds.length > max &&
-                demergerStatus == DemergerStatus.ACTIVE
-            ) {
-                if (nftIds.length % max > 0) {
-                    multiple = nftIds.length / max + 1;
-                } else {
-                    multiple = nftIds.length / max;
+            maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
+            if (nftIds.length > max) {
+                endIndex = max;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (nftIds.length % max > 0) {
+                        multiple = nftIds.length / max + 1;
+                    } else {
+                        multiple = nftIds.length / max;
+                    }
+                    split = 1;
+                    splitCounter++;
                 }
-                split = 2;
-                splitCounter++;
             }
-            endIndex = max;
         } else {
             if (nftIds.length % max > 0 && splitCounter >= multiple - 1) {
                 startIndex = splitCounter * max + 1;
@@ -1529,7 +1530,6 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         ItemIdIO[] memory items = new ItemIdIO[](arrayLength);
         uint256[] memory ids = new uint256[](arrayLength);
         uint256[] memory quantities = new uint256[](arrayLength);
-        uint256 max = ISettings(settingsContract).maxItemsArrayLength();
         uint256 startIndex;
         uint256 arrayLength;
         uint256 endIndex;
@@ -1542,18 +1542,19 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             endIndex = items.length;
         }
         if (split == 0) {
-            if (items.length > max &&
-                demergerStatus == DemergerStatus.ACTIVE
-            ) {
-                if (items.length % max > 0) {
-                    multiple = items.length / max + 1;
-                } else {
-                    multiple = items.length / max;
+            maxItemsArrayLength = ISettings(settingsContract).maxItemsArrayLength();
+            if (items.length > max ) {
+                endIndex = max;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (items.length % max > 0) {
+                        multiple = items.length / max + 1;
+                    } else {
+                        multiple = items.length / max;
+                    }
+                    split = 3;
+                    splitCounter++;
                 }
-                split = 3;
-                splitCounter++;
             }
-            endIndex = max;
             {
                 bool exist;
                 uint256[] memory idsTickets = new uint256[](7);
@@ -1683,20 +1684,20 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         uint256 startIndex;
         uint256 endIndex;
-        uint256 max = ISettings(settingsContract).maxNftArrayLength();
         if (split == 0) {
-            if (nftIds.length > max &&
-                demergerStatus == DemergerStatus.ACTIVE
-            ) {
-                if (nftIds.length % max > 0) {
-                    multiple = nftIds.length / max + 1;
-                } else {
-                    multiple = nftIds.length / max;
+            maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
+            if (nftIds.length > max) {
+                endIndex = max;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (nftIds.length % max > 0) {
+                        multiple = nftIds.length / max + 1;
+                    } else {
+                        multiple = nftIds.length / max;
+                    }
+                    split = 1;
+                    splitCounter++;
                 }
-                split = 4;
-                splitCounter++;
             }
-            endIndex = max;
         } else {
             if (nftsIds.length % max > 0 && splitCounter >= multiple - 1) {
                 startIndex = splitCounter * max + 1;
@@ -1735,6 +1736,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                         )
                     )
                 );
+                delete ownedNft[nftAddress[i]][nftIds[i]];
             }
         }
         if (splitCounter == multiple) {
@@ -1769,7 +1771,6 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         uint256[] memory ids1155 = new uint256[](arrayLength);
         uint256[] memory quantity1155 = new uint256[](arrayLength);
         address[] memory address1155 = new uint256[](arrayLength);
-        uint256 max = ISettings(settingsContract).maxItemsArrayLength();
         uint256 startIndex;
         uint256 arrayLength;
         uint256 endIndex;
@@ -1785,22 +1786,23 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             endIndex = _ext1155ToTransfer.length;
         }
         if (split == 0) {
-            if (ids55.length > max && 
-                demergerStatus == DemergerStatus.ACTIVE
-            ) {
-                if (ids1155.length % max > 0) {
-                    multiple = ids1155.length / max + 1;
-                } else {
-                    multiple = ids1155.length / max;
+            maxItemsArrayLength = ISettings(settingsContract).maxItemsArrayLength();
+            if (ids55.length > max) {
+                endIndex = max;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (ids1155.length % max > 0) {
+                        multiple = ids1155.length / max + 1;
+                    } else {
+                        multiple = ids1155.length / max;
+                    }
+                    split = 5;
+                    splitCounter++;
                 }
-                split = 5;
-                splitCounter++;
-            }
-            endIndex = max;
+            } 
         } else {
-            if (nftsIds.length % max > 0 && splitCounter >= multiple - 1) {
+            if (ids1155.length % max > 0 && splitCounter >= multiple - 1) {
                 startIndex = splitCounter * max + 1;
-                endIndex = nftsIds.length;
+                endIndex = ids1155.length;
             } else {
                 startIndex = splitCounter * max + 1;
                 endIndex = (splitCounter + 1) * max;
@@ -1809,33 +1811,38 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         if (endIndex > idsDiamond.length) endIndex = idsDiamond.length;
         if (startIndex > idsDiamond.length) return;
-        for ()
-        (bool success, bytes memory returnData) = 
-            address1155.call(
-                abi.encodeWithSignature(
-                    "safeBatchTransferFrom(
-                        address,
-                        address,
-                        uint256[],
-                        uint256[],
-                        bytes
-                    )", 
-                    address(this), 
-                    target, 
-                    ids1155[i], 
-                    quantity1155[i], 
-                    new bytes(0)
+        for () {}
+            (bool success, bytes memory returnData) = 
+                address1155[i].call(
+                    abi.encodeWithSignature(
+                        "safeBatchTransferFrom(
+                            address,
+                            address,
+                            uint256[],
+                            uint256[],
+                            bytes
+                        )", 
+                        address(this), 
+                        target, 
+                        ids1155[i], 
+                        quantity1155[i], 
+                        new bytes(0)
+                        )
+                );
+            require(
+                success,
+                string(
+                    abi.encodePacked(
+                        "mergeItems: merge items order failed: ",
+                        returnData
                     )
-            );
-        require(
-            success,
-            string(
-                abi.encodePacked(
-                    "mergeItems: merge items order failed: ",
-                    returnData
                 )
-            )
-        );
+            );
+            if (demergerStatus == DemergerStatus.ACTIVE) {
+                owned1155[address1155[i]][ids1155[i]] -= quantity1155[i];
+            } else {
+                delete owned1155[address1155[i]][ids1155[i]];
+            }
         if (splitCounter == multiple) {
             if (split > 0) {
                 split = 0;
@@ -1888,6 +1895,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             _nftsIds.length + 
             _realmsIds.length + 
             _itemsIds.length +
+            _itemsQuantity.length +
             _ticketsQuantity.length + 
             _extNftsIds.length + 
             _extNftsAddress.length +

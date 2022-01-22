@@ -212,6 +212,17 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         }
         emit Initialized(name, symbol);
     }
+
+    // ======== External: Donation =========
+
+    function donateERC20(address _tokenAddress, uint256 _value) external {
+        require(
+            _tokenAddress != ghstContract,
+            "donateERC20: GHST can be donated directly"
+        );
+        ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
+        ownedErc20[_tokenAddress][_value] = _value;
+    }
     
     // ======== External: Funding =========
 
