@@ -6,9 +6,56 @@ pragma solidity ^0.8.5;
  * @author Quentin for FrAaction Gangs
  */
 
-interface DiamondInterface {
+// Struct from the Aavegotchi LibAppStorage library
+    struct Dimensions {
+        uint8 x;
+        uint8 y;
+        uint8 width;
+        uint8 height;
+    }
 
-  // Struct from the Aavegotchi LibAavegotchi library
+    // Struct from the LibAavegotchi contract
+    struct ItemType {
+        string name; //The name of the item
+        string description;
+        string author;
+        // treated as int8s array
+        // [Experience, Rarity Score, Kinship, Eye Color, Eye Shape, Brain Size, Spookiness, Aggressiveness, Energy]
+        int8[6] traitModifiers; //[WEARABLE ONLY] How much the wearable modifies each trait. Should not be more than +-5 total
+        //[WEARABLE ONLY] The slots that this wearable can be added to.
+        bool[16] slotPositions;
+        // this is an array of uint indexes into the collateralTypes array
+        uint8[] allowedCollaterals; //[WEARABLE ONLY] The collaterals this wearable can be equipped to. An empty array is "any"
+        // SVG x,y,width,height
+        Dimensions dimensions;
+        uint256 ghstPrice; //How much GHST this item costs
+        uint256 maxQuantity; //Total number that can be minted of this item.
+        uint256 totalQuantity; //The total quantity of this item minted so far
+        uint32 svgId; //The svgId of the item
+        uint8 rarityScoreModifier; //Number from 1-50.
+        // Each bit is a slot position. 1 is true, 0 is false
+        bool canPurchaseWithGhst;
+        uint16 minLevel; //The minimum Aavegotchi level required to use this item. Default is 1.
+        bool canBeTransferred;
+        uint8 category; // 0 is wearable, 1 is badge, 2 is consumable
+        int16 kinshipBonus; //[CONSUMABLE ONLY] How much this consumable boosts (or reduces) kinship score
+        uint32 experienceBonus; //[CONSUMABLE ONLY]
+    }
+
+    // Struct from the Aavegotchi libItems contract
+    struct ItemTypeIO {
+        uint256 balance;
+        uint256 itemId;
+        ItemType itemType;
+    }
+
+    // Struct from the Aavegotchi itemsFacet contract
+    struct ItemIdIO {
+        uint256 itemId;
+        uint256 balance;
+    }
+
+    // Struct from the Aavegotchi LibAavegotchi library
     struct AavegotchiInfo {
         uint256 tokenId;
         string name;
@@ -70,17 +117,15 @@ interface DiamondInterface {
         bool cancelled;
     }
     
-    // Struct from the Aavegotchi itemsFacet contract
-    struct ItemIdIO {
-        uint256 itemId;
-        uint256 balance;
-    }
+interface DiamondInterface {
+
+    
     
     // function signatures from the Aavegotchi ERC1155MarketplaceFacet contract
     function getERC1155Listing(uint256 _listingId) external view returns (ERC1155Listing memory listing_);
     // function signatures from Aavegotchi ERC721MarketplaceFacet contract
     function getERC721Listing(uint256 _listingId) external view returns (ERC721Listing memory listing_);
-    function getERC721Category(address _erc721TokenAddress, uint256 _erc721TokenId) public view returns (uint256 category_);
+    function getERC721Category(address _erc721TokenAddress, uint256 _erc721TokenId) external view returns (uint256 category_);
     // function signatures from AavegotchiFacet contract
     function getAavegotchi(uint256 _tokenId) external view returns (AavegotchiInfo memory aavegotchiInfo_);
     function setApprovalForAll(address _operator, bool _approved) external;
@@ -89,11 +134,7 @@ interface DiamondInterface {
         address _from,
         address _to,
         uint256 _tokenId
-    ) external {
-        address sender = LibMeta.msgSender();
-        internalTransferFrom(sender, _from, _to, _tokenId);
-        LibERC721.checkOnERC721Received(sender, _from, _to, _tokenId, "");
-    };
+    ) external;
     function safeBatchTransferFrom(
         address _from,
         address _to,
@@ -123,7 +164,7 @@ interface DiamondInterface {
         bytes calldata _data
     ) external;
     // function signature from Aavegotchi GHSTFacet contract
-    function approve(address _spender, uint256 _value) public returns (bool success);
+    function approve(address _spender, uint256 _value) external returns (bool success);
     // function signature from Aavegotchi VRFFacet contract
     function openPortals(uint256[] calldata _tokenIds) external;
     // function signatures from Aavegotchi AavegotchiGameFacet contract
@@ -136,7 +177,7 @@ interface DiamondInterface {
         uint256 _stakeAmount
     ) external;
     function spendSkillPoints(uint256 _tokenId, int16[4] calldata _values) external;
-    function availableSkillPoints(uint256 _tokenId) public view returns (uint256);
+    function availableSkillPoints(uint256 _tokenId) external view returns (uint256);
     function interact(uint256[] calldata _tokenIds) external;
     // function signatures from Aavegotchi CollateralFacet contract
     function collateralBalance(uint256 _tokenId) external view returns (

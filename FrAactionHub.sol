@@ -21,14 +21,6 @@ import {
 } from "./FraactionInterface.sol";
 
 contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
-    
-    // All state variables located in FrAactionSPDAO.sol
-    
-    // ============ Diamond Interface variables ============
-    
-    // Interface variables with the Aavegotchi Diamond contract
-    ERC721Listing internal diamond;
-    ERC1155Listing internal diamondItem;
   
     // ============ Events ============
     
@@ -157,6 +149,44 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         address collateral,
         uint256 collateralAmount
     );
+
+    // an event emitted when someone donated ERC20 tokens to the FrAactionHub
+    event DonatedErc20(
+        address indexed tokenAddress,
+        uint256 value
+    );
+
+    // an event emitted when someone donated ERC721 tokens to the FrAactionHub
+    event DonatedErc721(
+        address indexed contributor,
+        uint256 id
+    );
+
+    // an event emitted when someone donated ERC1155 tokens to the FrAactionHub
+    event DonatedErc1155(
+        address indexed contributor,
+        uint256 id,
+        uint256 value
+    );
+
+    // an event emitted when someone acknowledged ERC20 tokens for the FrAactionHub
+    event AcknowledgedErc20(
+        address indexed tokenAddress,
+        uint256 value
+    );
+
+    // an event emitted when someone acknowledged ERC721 tokens for the FrAactionHub
+    event AcknowledgedErc721(
+        address indexed contributor,
+        uint256 id
+    );
+
+    // an event emitted when someone acknowledged ERC1155 tokens for the FrAactionHub
+    event AcknowledgedErc1155(
+        address indexed contributor,
+        uint256 id,
+        uint256 value
+    );
     
     // ======== Modifiers =========
 
@@ -189,6 +219,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         __ReentrancyGuard_init();
         __ERC721Holder_init();
         __ERC1155Holder_init();
+        thisContract = address.this;
         fraactionDaoMultisig = _fraactionDaoMultisig;
         diamondContract = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
         ghstContract = 0x385eeac5cb85a38a9a07a70c73e0a3271cfb54a7;
@@ -198,6 +229,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         marketContract = ;
         settingsContract = ;
         wrappedMaticContract = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
+        DiamondInterface(diamondContract).setApprovalForAll(diamondContract, true);
+        DiamondInterface(stakingContract).setApprovalForAll(rafflesContract, true);
+        IERC20(ghstContract).approve(stakingContract, MAX_INT);
         // set storage variables
         name = _name;
         symbol = _symbol;
@@ -215,40 +249,146 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     // ======== External: Donation =========
 
-    function donateERC20(address _tokenAddress, uint256 _value) external {
+    function donateFungibleTokens(address _tokenAddress, uint256 _value) external payable {
+        if (_tokenAddress == ghstContract) {
+            ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
+            totalTreasuryInGhst += _value;
+        } else if (_tokenAddress == address(0) && msg.value > 0) {
+            totalTreasuryInMatic += msg.value;
+        } else {
+            ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
+            if (ownedErc20[_tokenAddress] == 0) {
+                totalNumberExtAssets++;
+                erc20tokens.push(_tokenAddress);
+            }
+            ownedErc20[_tokenAddress] += value;
+        }
+        emit DonatedErc20(_tokenAddress, _value);
+    }
+
+    function donateExtNft(address _tokenAddress, uint256 _id) external {
         require(
-            _tokenAddress != ghstContract,
-            "donateERC20: GHST can be donated directly"
+            _tokenAddress != diamondContract &&
+            _tokenAddress != realmsContract,
+            "donateExtNft: Aavegotchi NFTs can be donated to the FrAactionHub with a simple ERC721 transfer"
         );
-        ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
-        ownedErc20[_tokenAddress][_value] = _value;
+        ERC721Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id);
+        if (!ownedErc721[_tokenAddress][_id]) {
+            totalNumberExtAssets++;
+            Nft memory newNft = Nft(_tokenAddress, _id);
+            nfts.push(newNft);
+        }
+        ownedNfts[_tokenAddress][_id] = true;
+        emit DonatedExtNft(_tokenAddress, _id);
+    }
+
+    function donateErcExt1155(address _tokenAddress, uint256 _id, uint256 _value) external {
+        require(
+            _tokenAddress != diamondContract &&
+            _tokenAddress != stakingContract,
+            "donateErcExt1155: Aavegotchi items can be donated to the FrAactionHub with a simple ERC1155 transfer"
+        );
+        ERC1155Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id, _value);
+        if (ownedErc1155[_tokenAddress][_id] == 0) {
+            totalNumberExtAssets++;
+            Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
+            erc1155Tokens.push(newErc1155);
+        }
+        ownedErc1155[_tokenAddress][_id] += _value;
+        emit DonatedExtErc1155(_tokenAddress, _id, _value);
+    }
+
+    function acknowledgeExtErc20(address _tokenAddress, uint256 _value) external {
+        require(
+            _tokenAddress != ghstAddress,
+            "acknowledgeExtErc20: GHST tokens are natively acknowledged by the FrAactionHub"
+        );
+        uint256 balance = IERC721Upgradeable(_tokenAddress).balanceOf(address(this));
+        require(
+            balance >= _value + ownedErc20[_tokenAddress],
+            "acknowledgeExtErc20: insufficient token balance"
+        );
+        if (!ownedErc20[_tokenAddress]) {
+            totalNumberExtAssets++;
+            erc20Tokens.push(_tokenAddress);
+        }
+        ownedErc20[_tokenAddress] += value;
+        emit AcknwoledgedExtErc20(_tokenAddress, _value);
+    }
+
+    function acknowledgeExtNft(address _tokenAddress, uint256 _id) external {
+        require(
+            _tokenAddress != diamondContract &&
+            _tokenAddress != realmsContract,
+            "acknowledgeExtNft: Aavegotchi NFTs are natively acknowledged by the FrAactionHub"
+        );
+        require(
+            ERC721Upgradeable(_tokenAddress).ownerOf(_id) == address(this),
+            "acknowledgeExtNft: FrAactionHub not owner of this NFT"
+        );
+        if (!ownedErc721[_tokenAddress][_id]) {
+            totalNumberExtAssets++;
+            Nft memory newNft = Nft(_tokenAddress, _id);
+            nfts.push(newNft);
+        }
+        ownedNfts[_tokenAddress][_id] = true;
+        emit AcknowledgedExtNft(_tokenAddress, _id);
+    }
+    
+    function acknowledgeExt1155(address _tokenAddress, uint256 _id, uint256 _value) external {
+        require(
+            _tokenAddress != diamondContract &&
+            _tokenAddress != stakingContract,
+            "acknowledgeExtErc1155: Aavegotchi items are natively acknowledged by the FrAactionHub"
+        );
+        require(
+            ERC1155Upgradeable(_tokenAddress).balanceOf(address(this), _id) == _value,
+            "acknowledgeExtErc1155: FrAactionHub not owner of this NFT"
+        );
+        if (ownedErc1155[_tokenAddress][_id] == 0) {
+            totalNumberExtAssets++;
+            Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
+            erc1155Tokens.push(newErc1155);
+        }
+        ownedErc1155[_tokenAddress][_id] += _value;
+        emit AcknwoledgedExtErc1155(_tokenAddress, _id, _value);
     }
     
     // ======== External: Funding =========
 
     function startFundraising(bool _inGhst) external {
         require(
-            balanceOf(msg.sender) > 0,
-            "startFundraising: not a FrAactionHub owner"
-        );
-        require(
             fundingStatus == FundingStatus.INACTIVE,
             "startFundraising: FrAactionHub not fractionalized yet"
         );
         require(
+            portalFundingStatus == PortalFundingStatus.INACTIVE,
+            "startFundraising: FrAactionHub already having a new portal funding"
+        );
+                require(
             finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
             "startFundraising: Final auction already started"
         );
-        require(
-            portalStatus == PortalStatus.INACTIVE,
-            "startFundraising: FrAactionHub already having a new portal funding"
-        );
         if (_inGhst) fundraisingInGhst = _inGhst;
-        if (balanceOf(address(this)) == 0) {
-            if (fundraisingInGhst) exitInGhst = true;
+        if (firstRound) {
+            require(
+                initiator == msg.sender,
+                "startPurchase: not the FrAactionHub initiator"
+            );
+            fundingStatus = fundingStatus.FUNDING;
+        } else {
+            require(
+                balanceOf(msg.sender) > 0,
+                "startPurchase: not a FrAactionHub owner"
+            );
+            fundingStatus = fundingStatus.ACTIVE;
         }
-        fundingTime = block.timestamp;
-        fundingStatus = fundingStatus.ACTIVE;
+        fundingEnd = block.timestamp + (ISettings(settingsContract).maxNumberDaysFunding() * 1 days);
+        if (firstRound) {
+            fundingStatus = fundingStatus.FUNDING;
+        } else {
+            fundingStatus = fundingStatus.ACTIVE;
+        }
         totalContributedToFunding = 0;
         usedTreasury = _usedTreasury;
         emit StartedFundraising(msg.sender);
@@ -260,9 +400,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "confirmFunding: user not an owner of the FrAactionHub"
         );
         require(
-            fundingStatus == FundingStatus.ACTIVE ||
-            auctionStatus == AuctionStatus.ACTIVE, 
-            "confirmFunding: fundraising or auction not active"
+            fundingStatus == FundingStatus.ACTIVE, 
+            "confirmFunding: funding not active"
         );
         if (currentConfirmBalance[msg.sender] > 0 && !_confirm) {
             votesTotalConfirm -= currentConfirmBalance[msg.sender];
@@ -302,9 +441,19 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     }
 
     function contributeFundraising(uint256 _value) external payable nonReentrant {
-        if (block.timestamp > FundingTime + (ISettings(settingsContract).maxNumberDaysFunding() * 1 days)) {
+        require(
+            fundingStatus == FundingStatus.FUNDING,
+            "contributeFundraising: FrAactionHub not fractionalized yet"
+        );
+        if (privateHub) {
+            require(
+                balanceOf(msg.sender) > 0 ||
+                whitelisted[msg.sender], 
+                "contributeFundraising: user not an owner or whitelisted member of the FrAactionHub"
+            );
+        }
+        if (block.timestamp > fundingEnd) {
             fundingStatus = fundingStatus.INACTIVE;
-            if (fundraisingInGhst) fundraisingInGhst = 0;
         } else {
             require(
                 fundingStatus == FundingStatus.FUNDING,
@@ -324,7 +473,19 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 totalContributedToFraactionHubInGhst += _value;
                 totalTreasuryInGhst += _value;
                 totalContributedToFunding += _value;
-                mint(msg.sender, valueToTokens(_value));
+                if (firstRound == true) {
+                    // mint fractional ERC-20 tokens
+                    initializeVault(
+                        valueToTokens(totalContributedToFraactionHubInGhst, fundingInGhst[fundingNumber]), 
+                        totalContributedToFraactionHubInGhst, 
+                        name, 
+                        symbol
+                    );
+                    exitInGhst = true;
+                    firstRound = false;
+                } else {
+                    mint(msg.sender, valueToTokens(_value, fundingInGhst[fundingNumber]));
+                }
                 emit ContributedFundraising(msg.sender, _value);
             } else {
                 require(
@@ -335,7 +496,18 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 totalContributedToFraactionHubInMatic += msg.value;
                 totalTreasuryInMatic += msg.value;
                 totalContributedToFunding += msg.value;
-                mint(msg.sender, valueToTokens(msg.value));
+                if (firstRound == true) {
+                    // mint fractional ERC-20 tokens
+                    initializeVault(
+                        valueToTokens(totalContributedToFraactionHubInMatic, fundingInGhst[fundingNumber]), 
+                        totalContributedToFraactionHubInMatic, 
+                        name, 
+                        symbol
+                    );
+                    firstRound = false;
+                } else {
+                    mint(msg.sender, valueToTokens(msg.value, fundingInGhst[fundingNumber]));
+                }
                 emit ContributedFundraising(msg.sender, msg.value);
             }
         }
@@ -353,27 +525,17 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 _quantity,
         uint256 _usedTreasury
     ) external {
-        if (firstRound == true && 
-            fundingNumber > 0 &&
-            fundingResult[fundingNumber] == 0 &&
-            allClaimed == false
-        ) {
-            require(
-                allClaimed == true, 
-                "startPurchase: tokens have to be claimed to restart the first funding"
-            );
-        }
         require(
             fundingStatus == FundingStatus.INACTIVE,
             "startPurchase: funding already active"
         );
         require(
-            finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
-            "startPurchase: Final auction already started"
+            portalFundingStatus == PortalFundingStatus.INACTIVE,
+            "startPurchase: portal funding already active"
         );
         require(
-            balanceOf(msg.sender) > 0,
-            "startPurchase: not a FrAactionHub owner"
+            finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
+            "startPurchase: Final auction already started"
         );
         fundingNumber++;
         if (_inGhst) {
@@ -392,13 +554,26 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 "startPurchase: cannot purchase from the Baazaar with MATIC"
             );
         }
+        if (firstRound) {
+            require(
+                initiator == msg.sender,
+                "startPurchase: not the FrAactionHub initiator"
+            );
+            fundingStatus = fundingStatus.FUNDING;
+        } else {
+            require(
+                balanceOf(msg.sender) > 0,
+                "startPurchase: not a FrAactionHub owner"
+            );
+            fundingStatus = fundingStatus.ACTIVE;
+        }
         if (_usedTreasury > 0) usedTreasury = _usedTreasury;
         if (_baazaarPurchase) fromBaazaar = true;
         listingId = _listingId;
         if (fromBaazaar) {
             isNft = _isNft;
             if (isNft == true) {
-                diamond = DiamondInterface(diamondContract).getERC721Listing(listingId);
+                ERC721Listing memory diamond = DiamondInterface(diamondContract).getERC721Listing(listingId);
                 priceInWei = diamond.priceInWei;
                 require(
                     diamond.timePurchased == 0,
@@ -414,7 +589,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 );
             } else {
                 quantity = _quantity;
-                diamondItem = DiamondInterface(diamondContract).getERC1155Listing(listingId);
+                ERC1155Listing memory diamondItem = DiamondInterface(diamondContract).getERC1155Listing(listingId);
                 priceInWei = diamondItem.priceInWei;
                 require(
                     diamondItem.sold == false,
@@ -430,12 +605,13 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 );
             }
         }
-        if (balanceOf(address(this)) == 0) {
-            if (fundingInGhst[fundingNumber]) exitInGhst = true;
-        }
-        fundingTime = block.timestamp;
+        fundingEnd = block.timestamp + (ISettings(settingsContract).maxNumberDaysFunding() * 1 days);
         totalContributedToFunding = 0;
-        fundingStatus = fundingStatus.ACTIVE;
+        if (firstRound) {
+            fundingStatus = fundingStatus.FUNDING;
+        } else {
+            fundingStatus = fundingStatus.ACTIVE;
+        }
         emit Funding(
             listingId, 
             priceInWei, 
@@ -454,15 +630,18 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "contributePurchase: funding round not active"
         );
         require(
-            block.timestamp <= FundingTime + (ISettings(settingsContract).maxNumberDaysFunding() * 1 days),
+            block.timestamp <= fundingEnd,
             "contributePurchase: funding round expired"
         );
-         require(
-            balanceOf(msg.sender) > 0,
-            "contributePurchase: not a FrAactionHub contributor"
-        );
+        if (privateHub) {
+            require(
+                balanceOf(msg.sender) > 0 ||
+                whitelisted[msg.sender], 
+                "contributePurchase: user not an owner or whitelisted member of the FrAactionHub"
+            );
+        }
         uint256 value;
-        if (fundingInGhst) {
+        if (fundingInGhst[fundingNumber]) {
             value = _value;
         } else {
             value = msg.value;
@@ -473,6 +652,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         if (fromBaazaar) {
             if (isNft == true) {
+                ERC721Listing memory diamond = DiamondInterface(diamondContract).getERC721Listing(listingId);
                 if (diamond.timePurchased != 0 ||
                     diamond.cancelled == true ||
                     diamond.timeCreated == 0
@@ -486,6 +666,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     return;
                 }
             } else {
+                ERC1155Listing memory diamondItem = DiamondInterface(diamondContract).getERC1155Listing(listingId);
                 if (diamondItem.sold == true ||
                     diamondItem.cancelled == true ||
                     diamondItem.timeCreated == 0
@@ -500,9 +681,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 }
             }
         }
-        if (fundingInGhst && !fromBaazaar ||
-            fromBaazaar
-        ) {
+        if (fundingInGhst[fundingNumber]) {
             ownerTotalContributedInGhst[msg.sender] += _value;
             totalContributedToFraactionHubInGhst += _value;
             ERC20lib.transferFrom(ghstContract, msg.sender, address(this), _value);
@@ -516,11 +695,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalContributedToFunding + value <= getFundingGrossPrice() - usedTreasury,
             "contributePurchase: cannot contribute more than the gross price"
         );
-        if (ownerContributedToFunding[msg.sender][fundingNumber] = 0) contributorFunding.push(fundingNumber);  
-        fundingContributor[msg.sender].push(fundingNumber);
-        claimed[msg.sender] = false;
-        if (allClaimed == true) allClaimed = false;
-        if (GangInterface().FraactionGangster[msg.sender] == true) newOwner[msg.sender] == true;
+        if (ownerContributedToFunding[msg.sender][fundingNumber] = 0) fundingContributor.push(fundingNumber);  
         emit contributed(
             msg.sender,
             value,
@@ -539,17 +714,26 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             fundingStatus == FundingStatus.FUNDING,
             "purchase: funding round not active"
         );
+        // ensure there is enough GHST to order the purchase including FrAactionDAO fee
         require(
-            block.timestamp > fundingTime + (ISettings(settingsContract).minNumberDaysFunding() * 1 days),
-            "purchase: funding round minimum duration not reached"
+            totalContributedToFunding + usedTreasury == getFundingGrossPrice(),
+            "purchase: insufficient funds to purchase"
         );
         if (fromBaazaar) {
             if (isNft == true) {
-                // ensure there is enough GHST to order the purchase including FrAactionDAO fee
-                require(
-                    priceInWei == getFundingNetPrice(),
-                    "purchase: insufficient funds to purchase"
-                );
+                ERC721Listing memory diamond = DiamondInterface(diamondContract).getERC721Listing(listingId);
+                if (diamond.timePurchased != 0 ||
+                    diamond.cancelled == true ||
+                    diamond.timeCreated == 0
+                ) {
+                    fundingStatus = FundingStatus.SUBMITTED;
+                    emit contributed(
+                        msg.sender,
+                        0,
+                        0
+                    );
+                    return;
+                }
                 // submit the purchase order to the ERC721marketplaceFacet smart contract
                 (bool success, bytes memory returnData) =
                     diamondContract.call(
@@ -558,11 +742,19 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     )
                 );
             } else {
-                // ensure there is enough GHST to order the purchase including FrAactionDAO fee
-                require(
-                    priceInWei * quantity == getFundingNetPrice(),
-                    "purchase: insufficient funds to purchase"
-                );
+                ERC1155Listing memory diamondItem = DiamondInterface(diamondContract).getERC1155Listing(listingId);
+                if (diamondItem.sold == true ||
+                    diamondItem.cancelled == true ||
+                    diamondItem.timeCreated == 0
+                ) {
+                    fundingStatus = FundingStatus.SUBMITTED;
+                    emit contributed(
+                        msg.sender,
+                        0,
+                        0
+                    );
+                    return;
+                }
                 uint256 tokenId = diamondItem.erc1155TypeId;
                 ItemIdIO[] memory item = DiamondInterface(diamondContract).itemBalances(address(this));
                 for (uint i = 0; i < item.length; i++) {
@@ -593,10 +785,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @notice Finalize the state of the new purchase
      * @dev Emits a Finalized event upon success; callable by anyone
      */
-    function finalize() external nonReentrant {
+    function finalizePurchase() external nonReentrant {
         require(
             fundingStatus == fundingStatus.SUBMITTED,
-            "finalize: funding target not purchased"
+            "finalizePurchase: funding target not purchased"
         );
         bool existingItem;
         uint256 tokenId;
@@ -619,23 +811,27 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 fee;
         // if the repurchase was completed,
         if (fundingStatus == FundingStatus.COMPLETED) {
+            fundingResult[fundingNumber] = 1;
             // transfer the fee to FrAactionDAO
             fee = _getFundingFee(totalContributedToFunding);
-            ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
+            if (fundingInGhst[fundingNumber]) {
+                ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
+            } else {
+                transferMaticOrWmatic(fraactionDaoMultisig, fee);
+            }
             if (firstRound == true) {
                 // mint fractional ERC-20 tokens
                 initializeVault(
-                    valueToTokens(totalContributedToFraactionHub), 
-                    totalContributedToFraactionHub, 
+                    valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]), 
+                    totalContributedToFunding, 
                     name, 
                     symbol
                 );
+                if (fundingInGhst[fundingNumber]) exitInGhst = true;
+                firstRound = false;
             } else {
-                mint(address(this), valueToTokens(totalContributedToFunding));
+                mint(address(this), valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]));
             }
-            numberOfAssets++;
-            fundingResult[fundingNumber] = 1;
-            if (firstRound == true) firstRound = false;
         } else {
             fundingResult[fundingNumber] = 0;
         }
@@ -658,43 +854,44 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      */
     function claim(address _contributor) external nonReentrant {
         if (fundingStatus == FundingStatus.FUNDING &&
-            block.timestamp > fundingTime + (ISettings(settingsContract).maxNumberDaysFunding() * 1 days
+            block.timestamp > fundingEnd &&
+            !isBid[fundingNumber]
         ) {
             fundingResult[fundingNumber] = 0;
-            fundingStatus = FundingStatus.FRACTIONALIZED;
+            fundingStatus = FundingStatus.INACTIVE;
+        }
+        if (portalFundingStatus == PortalFundingStatus.FUNDING &&
+            block.timestamp > portalFundingEnd
+        ) {
+            portalFundingResult[portalFundingNumber] = 0;
+            portalFundingStatus = PortalFundingStatus.INACTIVE;
         }
         require(
-            fundingStatus == FundingStatus.FRACTIONALIZED,
-            "claim: FrAactionHub still having a funding"
-        );
-        require(
-            portalStatus == PortalStatus.INACTIVE,
-            "claim: FrAactionHub still having an Aavegotchi funding"
-        );
-        require(claimed[_contributor] == false,
-            "claim: already claimed"
+            balanceOf(_contributor) > 0, 
+            "finalClaim: no tokens to cash out"
         );
         // calculate the amount of fractional NFT tokens owed to the user
         // based on how much GHST they contributed towards the new funding,
         // or the amount of GHST owed to the user if the FrAactionHub deadline is reached
         uint256 sumToken;
         uint256 sumGhst;
+        uint256 sumMatic;
         uint256 sumCollateral;
         {
-            uint256 portalLength;
-            if (portalStatus != PortalStatus.INACTIVE &&
-                ownerContributedCollateral[msg.sender][aavegotchiNumber] > 0
+            uint256 contributions;
+            if (portalFundingStatus != PortalFundingStatus.INACTIVE &&
+                ownerContributedCollateral[_contributor][portalFundingNumber] > 0
             ) {
-                portalLength = portalContributor[_contributor].length - 1;
+                contributions = portalFundingContributor[_contributor].length - 1;
             } else {
-                portalLength = portalContributor[_contributor].length;
+                contributions = portalFundingContributor[_contributor].length;
             }
-            for (uint i = 0; i < portalLength; i++) {
+            for (uint i = 0; i < contributions; i++) {
                 (uint256 tokenAmount, uint256 collateralAmount, address collateralAddress) = 
                     _portalCalculateTokensAndGhstOwed(
                         _contributor, 
-                        portalResult[portalContributor[_contributor][i]], 
-                        portalContributor[_contributor][i]
+                        portalFundingResult[portalFundingContributor[_contributor][i]], 
+                        portalFundingContributor[_contributor][i]
                     );
                 // transfer tokens to contributor for their portion of GHST used
                 if (tokenAmount > 0) {
@@ -705,25 +902,22 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     ERC20lib.transfer(collateralAddress, _contributor, collateralAmount);
                 }
             }
-            if (portalStatus != PortalStatus.INACTIVE &&
-                ownerContributedToFunding[_contributor][fundingNumber] &&
-                portalLength > 0
-            ) {
-                delete portalContributor[_contributor];
-                portalContributor[_contributor].push(portalNumber);
-            }
+            delete portalFundingContributor[_contributor];
+            if (portalFundingStatus != PortalFundingStatus.INACTIVE &&
+                ownerContributedCollateral[_contributor][portalFundingNumber] > 0
+            ) portalFundingContributor[_contributor].push(portalFundingNumber);
         }
         {
             uint256 fundingLength;
             if (fundingStatus != FundingStatus.INACTIVE &&
-                ownerContributedCollateral[msg.sender][aavegotchiNumber] > 0
+                ownerContributedToFunding[_contributor][fundingNumber] > 0
             ) {
                 fundingLength = fundingContributor[_contributor].length - 1;
             } else {
                 fundingLength = fundingContributor[_contributor].length;
             }
             for (uint i = 0; i < fundingLength; i++) {
-                (uint256 tokenAmount, uint256 ghstAmount) = 
+                (uint256 tokenAmount, uint256 ghstAmount, uint256 maticAmount) = 
                     _calculateTokensAndGhstOwed(
                         _contributor, 
                         fundingResult[fundingContributor[_contributor][i]], 
@@ -737,108 +931,117 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 if (ghstAmount > 0) {
                     sumGhst += ghstAmount;
                 }
+                // if the new funding deadline is reached or the repurchase failed then return all the MATIC to the contributor
+                if (maticAmount > 0) {
+                    sumMatic += maticAmount;
+                }
             }
-            if (portalStatus != PortalStatus.INACTIVE &&
-                ownerContributedToFunding[_contributor][fundingNumber] &&
-                fundingLength > 0
-            ) {
-                delete fundingContributor[_contributor];
-                fundingContributor[_contributor].push(fundingNumber);
-            }
+            delete fundingContributor[_contributor];
+            if (fundingStatus != FundingStatus.INACTIVE &&
+                ownerContributedToFunding[_contributor][fundingNumber] > 0
+            ) fundingContributor[_contributor].push(fundingNumber);
         }
         if (sumToken > 0) _transferTokens(_contributor, sumToken);
         if (sumGhst > 0) {
             if (sumGhst > IERC20Upgradeable(ghstContract).balanceOf(address(this))) sumGhst = IERC20Upgradeable(ghstContract).balanceOf(address(this));
             ERC20lib.transfer(ghstContract, _contributor, sumGhst);
         }
-        emit Claimed(
-            _contributor,
-            sumToken,
-            sumGhst,
-        );
         uint256 sum;
         for (uint i = 0; i < collateralAvailable.length; i++) {
             for (uint j = stakeIndex[_contributor][collateralAvailable[i]]; j < redeemedCollateral[collateralAvailable[i]].length; j++) {
                 sum += redeemedCollateral[collateralAvailable[i]][j];
             }
             if (sum > 0) {
-                uint256 refundedCollateral = collateralAvailable[i] * balanceOf(_contributor) / totalSupply() ;
-                if (refundedCollateral > IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this))) refundedCollateral = IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this));
-                ERC20lib.transfer(collateralAvailable[i], _contributor, refundedCollateral);
+                if (collateralAvailable[i] == thisContract) {
+                    sumMatic += sum * balanceOf(_contributor) / totalSupply();
+                } else {
+                    uint256 refundedCollateral = sum * balanceOf(_contributor) / totalSupply();
+                    if (refundedCollateral > IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this))) refundedCollateral = IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this));
+                    ERC20lib.transfer(collateralAvailable[i], _contributor, refundedCollateral);
+                }
                 emit CollateralRefunded(_contributor, collateralAvailable[i], refundedCollateral);
             }
-            stakeIndex[_contributor][collateralAvailable[i]] = i;
+            stakeIndex[_contributor][collateralAvailable[i]] = redeemedCollateral[collateralAvailable[i]].length;
             sum = 0;
         }
-        claimed[_contributor] = true;
-        bool noneClaimed;
-        for (uint i = 0; i < ownersAddress.length; i++) {
-            if (claimed[ownersAddress[i]] == false) {
-                claimed = true;
-                break;
+        if (sumMatic > 0) {
+            if (sumMatic > address(this).balance) sumMatic = address(this).balance;
+            transferMaticOrWmatic(_contributor, sumMatic);
+        }
+        emit Claimed(
+            _contributor,
+            sumToken,
+            sumGhst,
+            sumMatic
+        );
+        if (finalAuctionStatus == FinalAuctionStatus.BURNING) {
+            claimedCounter++;
+            if (claimedCounter == numberOfOwners) {
+                finalAuctionStatus = FinalAuctionStatus.INACTIVE;
+                claimedCounter = 0;
+            }
+            burn(_contributor, balanceOf(msg.sender));
+        }
+        if (finalAuctionStatus == FinalAuctionStatus.ENDED) {
+            claimedCounter++;
+            if (claimedCounter == numberOfOwners) {
+                balGhst = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+                balMatic = address(this).balance;
+                if (balGhst > 0) {
+                    redeemedCollateral[ghstContract].push(balGhst);
+                    if (collateralToRedeem[ghstContract] == 0) {
+                        collateralToRedeem[ghstContract] = true;
+                        collateralAvailable.push(ghstContract);
+                    } 
+                }
+                if (balMatic > 0) {
+                    redeemedCollateral[thisContract].push(balMatic);
+                    if (collateralToRedeem[thisContract] == 0) {
+                        collateralToRedeem[thisContract] = true;
+                        collateralAvailable.push(thisContract);
+                    }
+                }
+                claimedCounter = 0;
+                finalAuctionStatus = FinalAuctionStatus.BURNING;
             }
         }
-        if (noneClaimed == false) allClaimed = true;
     }
 
     function claimAll(address _contributor) external nonReentrant {
-        require(
-            fundingStatus == FundingStatus.FRACTIONALIZED,
-            "claimAll: FrAactionHub still having a funding"
-        );
-        require(
-            portalStatus == PortalStatus.INACTIVE,
-            "claimAll: FrAactionHub still having an Aavegotchi funding"
-        );
-        require(
-            !allClaimed,
-            "claimAll: already all claimed"
-        );
-        uint256 max = ISettings(settingsContract).maxOwnersArrayLength();
-        uint256 startIndex = 0;
+        uint256 startIndex;
         uint256 endIndex = ownersAddress.length;
-        if (split == false) {
-            if (ownersAddress.length > max) {
-                if (ownersAddress.length % max > 0) {
-                    multiple = ownersAddress.length / max + 1;
+        if (split == 0) {
+            maxOwnersArrayLength = ISettings(settingsContract).maxOwnersArrayLength();
+            if (ownersAddress.length > maxOwnersArrayLength {
+                endIndex = maxOwnersArrayLength;
+                if (ownersAddress.length % maxOwnersArrayLength > 0) {
+                    multiple = ownersAddress.length / maxOwnersArrayLength + 1;
                 } else {
-                    multiple = ownersAddress.length / max;
+                    multiple = ownersAddress.length / maxOwnersArrayLength;
                 }
-                split = true;
-                startIndex = splitCounter * max;
-                endIndex = (splitCounter + 1) * max;
+                split = 8;
+                splitCounter++;
             }
         } else {
-            if (ownersAddress.length % max > 0) {
-                if (splitCounter < multiple - 1) {
-                    startIndex = splitCounter * max + 1;
-                    endIndex = (splitCounter + 1) * max;
-                } else {
-                    startIndex = splitCounter * max + 1;
-                    endIndex = ownersAddress.length;
-                }
+            if (ownersAddress.length % maxOwnersArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
+                endIndex = ownersAddress.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxOwnersArrayLength;
             }
             splitCounter++;
-            if (splitCounter == multiple) {
-                split = false;
-                splitCounter = 0;
-                multiple = 0;
-                allClaimed = true;
-                emit ClaimedAll(address(this));
-            }
+        }
+        if (splitCounter == multiple) {
+            split = 0;
+            splitCounter = 0;
+            multiple = 0;
+            emit ClaimedAll(address(this));
         }
         if (endIndex > ownersAddress.length) endIndex = ownersAddress.length;
         if (startIndex > ownersAddress.length) return;
         for (uint i = 0; i < ownersAddress.length; i++) {
-            claim(ownerAddress[i]);
-            if (allClaimed) break;
-        }
-        if (splitCounter == 0 && split == false) {
-            allClaimed = true;
-            emit ClaimedAll(address(this));
+            claim(ownersAddress[i]);
         }
         feesContributor[msg.sender]++;
         if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
@@ -854,42 +1057,49 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 _quantity,
         uint256 _usedTreasury
     ) external {
-        if (firstRound == true && 
-            fundingNumber > 0 &&
-            fundingResult[fundingNumber] == 0 &&
-            allClaimed == false
-        ) {
-            require(
-                allClaimed == true, 
-                "startBid: tokens have to be claimed to restart the first funding"
-            );
-        }
-        require(
-            _usedTreasury <= totalTreasury,
-            "startBid: value higher than the current treasury"
-        );
         require(
             fundingStatus == FundingStatus.INACTIVE,
             "startBid: FrAactionHub not fractionalized yet"
         );
         require(
-            auctionStatus == AuctionStatus.INACTIVE, 
+            finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
             "startBid: Final auction already started"
         );
         require(
-            portalStatus == PortalStatus.INACTIVE,
+            portalFundingStatus == PortalFundingStatus.INACTIVE,
             "startBid: FrAactionHub already having a new portal funding"
         );
-        require(
-            balanceOf(msg.sender) > 0,
-            "startBid: not a FrAactionHub owner"
-        );
+        if (firstRound) {
+            require(
+                initiator == msg.sender,
+                "startBid: not the FrAactionHub initiator"
+            );
+            fundingStatus = fundingStatus.FUNDING;
+        } else {
+            require(
+                balanceOf(msg.sender) > 0,
+                "startBid: not a FrAactionHub owner"
+            );
+            fundingStatus = fundingStatus.ACTIVE;
+        }
+        bool inGhst = FraactionInterface(auctionTarget).checkExitTokenType();
+        if (inGhst) {
+            require(
+                _usedTreasury <= totalTreasuryInGhst,
+                "startBid: value higher than the current treasury"
+            );
+            fundingInGhst[fundingNumber] = inGhst;
+        } else {
+            require(
+                _usedTreasury <= totalTreasuryInMatic,
+                "startBid: value higher than the current treasury"
+            );
+        }
         auctionTarget = _auctionTarget;
         fundingNumber++;
         usedTreasury = _usedTreasury;
-        fundingTime = block.timestamp;
         totalContributedToFunding = 0;
-        fundingStatus = FundingStatus.ACTIVE;
+        isBid[fundingNumber] = true;
         emit StartAuction(auctionTarget);
     }
     
@@ -898,45 +1108,49 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * while the initial funding is still open
      * @dev Emits a ContributedBid event upon success; callable by anyone
      */
-    function contributeBid(uint256 _value) external nonReentrant {
+    function contributeBid(uint256 _value) external payable nonReentrant {
         require(
             fundingStatus == FundingStatus.FUNDING, 
             "contributeBid: FrAactionHub is not bidding yet"
         );
+        if (privateHub) {
+            require(
+                balanceOf(msg.sender) > 0 ||
+                whitelisted[msg.sender], 
+                "contributePurchase: user not an owner or whitelisted member of the FrAactionHub"
+            );
+        }
+        uint256 value;
+        if (fundingInGhst[fundingNumber]) {
+            value = _value;
+        } else {
+            value = msg.value;
+        }
         require(
-            FraactionInterface(fraactionHubTarget).openForBid() == true, 
-            "contributeBid: no bidding yet allowed by the FrAactionHub target"
+            value > 0, 
+            "contributePurchase: must contribute more than 0"
         );
-        require(
-            _value > 0, 
-            "contributeBid: must contribute more than 0"
-        );
-        require(
-            _value + totalContributedToFunding <= FraactionInterface(auctionTarget).getMinBid() - usedTreasury, 
-            "contributeBid: bid amount must be less than the maximum bid possible"
-        );
-        address _contributor = msg.sender;
-        ERC20lib.transferFrom(ghstContract, _contributor, address(this), _value);
         // add contribution to contributor's array of contributions
         Contribution memory _contribution =
             Contribution({
-                amount: _amount,
-                previousTotalContributedToFraactionHub: _previousTotalContributedToFraactionHub
+                amount: value,
+                previousTotalContributedToFraactionHub: totalContributedToFunding
             });
         contributions[_contributor].push(_contribution);
-        // add to contributor's total contribution
-        ownerContributedToFunding[_contributor][fundingNumber] += _value;
-        totalContributedToFunding += _value;
-        fundingContributor[_contributor].push(fundingNumber);
-        ownerTotalContributed[_contributor] += _value;
-        if (!isBid[fundingNumber]) isBid[fundingNumber] = true;
-        // add to FrAactionHub's total contribution & emit event
-        totalContributedToFraactionHub += _value;
-        claimed[_contributor] == false;
-        if (allClaimed == true) allClaimed = false;
+        if (ownerContributedToFunding[msg.sender][fundingNumber] = 0) fundingContributor[_contributor].push(fundingNumber);
+        if (fundingInGhst[fundingNumber]) {
+            ownerTotalContributedInGhst[msg.sender] += value;
+            totalContributedToFraactionHubInGhst += value;
+            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+        } else {
+            ownerTotalContributedInMatic[msg.sender] += value;
+            totalContributedToFraactionHubInMatic += value;
+        }
+        ownerContributedToFunding[msg.sender][fundingNumber] += value;
+        totalContributedToFunding += value;
         emit ContributedAuction(
             _contributor,
-            _value,
+            value,
             ownerContributedToFunding[_contributor][fundingNumber]
         );
     }
@@ -950,30 +1164,26 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             fundingStatus == FundingStatus.FUNDING, 
             "submitBid: FrAactionHub is not bidding yet"
         );
-        require(
-            FraactionInterface(auctionTarget).openForBid() == true, 
-            "submitBid: no bidding yet allowed by the FrAactionHub target"
-        );
-        submittedBid = FraactionInterface(auctionTarget).getMinBid();
+        bool checkOpenBid = FraactionInterface(auctionTarget).openForBid();
+        uint256 submittedBid = FraactionInterface(auctionTarget).getMinBid();
+        ERC20Upgradeable(auctionTarget).approve(auctionTarget, MAX_INT);
         require(
             submittedBid <= _getMaxBid(), 
             "submitBid: bid amount must be less than the maximum bid possible"
         );
-        (bool success, bytes memory returnData) =
-            auctionTarget.call(
-                abi.encodeWithSignature("bid(uint256)", 
-                submittedBid
-            )
-        );
-        require(
-            success,
-            string(
-                abi.encodePacked(
-                    "submitBid: place bid failed: ",
-                    returnData
-                )
-            )
-        );
+        if (checkOpenBid) {
+            if (fundingInGhst[fundingNumber]) {
+                FraactionInterface(auctionTarget).bid(); 
+            } else {
+                FraactionInterface(auctionTarget).bid{value: submittedBid}();
+            }
+        } else {
+            if (fundingInGhst[fundingNumber]) {
+                FraactionInterface(auctionTarget).startFinalAuction();
+            } else {
+                FraactionInterface(auctionTarget).startFinalAuction{value: submittedBid}();
+            }
+        }
         fundingStatus = FundingStatus.SUBMITTED;
         emit SubmitBid(submittedBid);
     }
@@ -982,14 +1192,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @notice Finalize the state of the initial auction
      * @dev Emits a FinalizedBid event upon success; callable by anyone
      */
-    function finalizeBid(
-        uint256[] calldata _extNftsIds,  
-        uint256[] calldata _ext1155Ids,
-        uint256[] calldata _ext1155Quantity,
-        address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address
-    ) external nonReentrant {
+    function finalizeBid() external nonReentrant {
         require(
+            fundingStatus == FundingStatus.FUNDING ||
             fundingStatus == FundingStatus.SUBMITTED,
             "finalizeBid: initial auction not live"
         );
@@ -997,31 +1202,31 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             FraactionInterface(auctionTarget).finalAuctionStatus() == FinalAuctionStatus.ENDED,
             "finalizeBid: auction still live"
         );
-        require(
-            _extNftsIds.length == _extNftsAddress.length &&
-            _ext1155Ids.length == _ext1155Quantity.length
-            _ext1155Quantity.length == _ext1155Address.length,
-            "finalizeBid: each NFT ID needs a corresponding token address"
-        );
-        fundingStatus = FraactionInterface(auctionTarget).winning() == address(this) ? FundingStatus.COMPLETED : AuctionStatus.FAILED;
+        ERC20Upgradeable(auctionTarget).approve(auctionTarget, 0);
+        fundingStatus = FraactionInterface(auctionTarget).winning() == address(this) ? FundingStatus.COMPLETED : FundingStatus.FAILED;
         uint256 fee;
         // if the purchase was completed,
         if (fundingStatus == FundingStatus.COMPLETED) {
             // transfer the fee to FrAactionDAO
             fee = getFundingFee(submittedBid);
-            ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
-            mergerStatus = MergerStatus.ACTIVE;
             fundingResult[fundingNumber] = 1;
-            if (gameType == true) {
-                
+            if (fundingInGhst[fundingNumber]) {
+                ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
+            } else {
+                transferMaticOrWmatic(fraactionDaoMultisig, fee);
             }
-            postAuctionMerge(
-                _extNftsIds,  
-                _ext1155Ids,
-                _ext1155Quantity,
-                _extNftsAddress, 
-                _ext1155Address
-            );
+            if (firstRound == true) {
+                // mint fractional ERC-20 tokens
+                initializeVault(
+                    valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]), 
+                    totalContributedToFunding, 
+                    name, 
+                    symbol
+                );
+                firstRound = false;
+            } else {
+                mint(address(this), valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]));
+            }
         } else {
             fundingResult[fundingNumber] = 0;
         }
@@ -1038,10 +1243,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      */
     function startPortalFunding(uint256 _tokenId) external {
         require(
-            _option < 10,
-            "startPortalFunding: only 10 options possible"
-        );
-        require(
             aavegotchi[_tokenId] > 0,
             "startPortalFunding: Aavegotchi not appointed yet by the FrAactionHub owners"
         );
@@ -1050,24 +1251,23 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "startPortalFunding: Final auction already started"
         );
         require(
-            portalStatus == PortalStatus.INACTIVE ||
-            portalStatus == PortalStatus.FRACTIONALIZED,
+            portalFundingStatus == PortalFundingStatus.INACTIVE ||
+            portalFundingStatus == PortalFundingStatus.FRACTIONALIZED,
             "startPortalFunding: FrAactionHub already having a new portal funding"
         );
         require(
             balanceOf(msg.sender) > 0,
             "startPortalFunding: not a FrAactionHub owner"
         );
-        portalStatus = PortalStatus.FUNDING;
-        portalTarget = _tokenId;
-        portalOption = aavegotchi[_tokenId];
-        portalNumber++;
-        PortalAavegotchiTraitsIO[] memory minStake = DiamondInterface(diamondContract).portalAavegotchiTraits(_tokenId);
-        collateralType = DiamondInterface(diamondContract).portalAavegotchiTraits(_tokenId).collateralType;
-        maxContribution = minStake[_option].minimumStake;
-        portalFundingTime = block.timestamp;
+        portalFundingStatus = PortalStatus.FUNDING;
+        portalFundingTarget = _tokenId;
+        portalFundingNumber++;
+        PortalAavegotchiTraitsIO[] memory portalInfo = DiamondInterface(diamondContract).portalAavegotchiTraits(_tokenId);
+        collateralType = portalInfo[aavegotchi[portalFundingTarget]].collateralType;
+        maxContribution = portalInfo[aavegotchi[portalFundingTarget]].minimumStake;
+        portalFundingEnd = block.timestamp + (ISettings(settingsContract).maxNumberDaysPortalFunding() * 1 days);
         totalContributedToPortalFunding = 0;
-        portalStatus = PortalStatus.FUNDING;
+        portalFundingStatus = PortalFundingStatus.FUNDING;
         emit PortalFunding(
             _tokenId, 
             _option, 
@@ -1079,36 +1279,34 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @notice Contribute in order to summon the appointed Aavegotchi 
      * @dev Emits a ContributedAavegotchi event upon success; 
      */
-    function contributePortal(uint256 _stakeAmount) external nonReentrant {
+    function contributePortalFunding(uint256 _stakeAmount) external nonReentrant {
         require(
-            portalStatus == PortalStatus.FUNDING,
-            "contributePortal: FrAactionHub portal funding not active"
+            portalFundingStatus == PortalFundingStatus.FUNDING,
+            "contributePortalFunding: FrAactionHub portal funding not active"
         );
         require(
             balanceOf(msg.sender) > 0,
-            "contributePortal: not a FrAactionHub owner"
+            "contributePortalFunding: not a FrAactionHub owner"
         );
         require(
-            block.timestamp <= portalFundingTime + (ISettings(settingsContract).maxNumberDaysPortalFunding() * 1 days),
-            "contributePortal: Aavegotchi funding round expired"
+            block.timestamp <= portalFundingEnd,
+            "contributePortalFunding: Aavegotchi funding round expired"
         );
         require(
             totalContributedToPortalFunding + _stakeAmount <= maxContribution,
-            "contributePortal: can't contribute more than the gross contribution"
+            "contributePortalFunding: can't contribute more than the gross contribution"
         );
         ERC20lib.transferFrom(collateralType, msg.sender, address(this), _stakeAmount);
         // convert collateral to GHST
         uint256 convertedCollateralToGhst = _stakeAmount * (ISettings(settingsContract).collateralTypeToGhst(collateralType) / 10**8);
-        ownerContributedCollateral[msg.sender][aavegotchiNumber] += _stakeAmount;
-        ownerCollateralType[msg.sender][aavegotchiNumber] = collateralType;
-        ownerContributedToPortalFunding[msg.sender][aavegotchiNumber] += convertedCollateralToGhst;
+        ownerContributedCollateral[msg.sender][portalFundingNumber] += _stakeAmount;
+        ownerCollateralType[msg.sender][portalFundingNumber] = collateralType;
+        ownerContributedToPortalFunding[msg.sender][portalFundingNumber] += convertedCollateralToGhst;
         totalContributedToPortalFunding += convertedCollateralToGhst;
-        ownerTotalContributed[msg.sender] += convertedCollateralToGhst;
-        totalContributedToFraactionHub += convertedCollateralToGhst;
-        portalContributor[msg.sender].push(portalNumber);
-        claimed[msg.sender] = false;
-        if (allClaimed == true) allClaimed = false;
-        emit ContributedPortal(
+        ownerTotalContributedInGhst[msg.sender] += convertedCollateralToGhst;
+        totalContributedToFraactionHubInGhst += convertedCollateralToGhst;
+        portalFundingContributor[msg.sender].push(portalFundingNumber);
+        emit ContributedPortalFunding(
             msg.sender,
             collateralType,
             _stakeAmount
@@ -1123,12 +1321,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      */
     function claimAavegotchi() external nonReentrant {
         require(
-            portalStatus == PortalStatus.FUNDING,
+            portalFundingStatus == PortalFundingStatus.FUNDING,
             "claimAavegotchi: FrAactionHub portal funding not active"
-        );
-        require(
-             block.timestamp > portalFundingTime + (ISettings(settingsContract).minNumberDaysPortalFunding() * 1 days),
-            "claimAavegotchi: Aavegotchi funding round minimum duration not reached"
         );
         require(
             maxContribution == totalContributedToPortalFunding,
@@ -1137,8 +1331,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         (bool success, bytes memory returnData) =
             diamondContract.call(
                 abi.encodeWithSignature("claimAavegotchi(uint256,uint256,uint256)", 
-                portalTarget, 
-                portalOption, 
+                portalFundingTarget, 
+                aavegotchi[portalFundingTarget], 
                 maxContribution
             )
         );
@@ -1151,7 +1345,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 )
             )
         );
-        portalStatus = PortalStatus.CLAIMED;
+        portalFundingStatus = PortalFundingStatus.CLAIMED;
         emit ClaimedAavegotchi(maxContribution);
     }
     
@@ -1159,27 +1353,27 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @notice Finalize the state of the Aavegotchi claim
      * @dev Emits a FinalizedAavegotchi event upon success; callable by anyone
      */
-    function finalizePortal() external nonReentrant {
+    function finalizePortalFunding() external nonReentrant {
         require(
-            portalStatus == PortalStatus.CLAIMED,
-            "finalizePortal: FrAactionHub Aavegotchi target not claimed yet"
+            portalFundingStatus == PortalFundingStatus.CLAIMED,
+            "finalizePortalFunding: FrAactionHub Aavegotchi target not claimed yet"
         );
-        portalStatus = DiamondInterface(diamondContract).getERC721Category(diamondContract, portalTarget) == 3 ? PortalStatus.COMPLETED: PortalStatus.FUNDING;
+        portalFundingStatus = DiamondInterface(diamondContract).getERC721Category(diamondContract, portalTarget) == 3 ? PortalFundingStatus.COMPLETED: PortalFundingStatus.FUNDING;
         uint256 _fee;
         // if the Aavegotchi claim was completed,
-        if (portalStatus == PortalStatus.COMPLETED) {
+        if (portalFundingStatus == PortalFundingStatus.COMPLETED) {
             // transfer the fee to FrAactionDAO
             _fee = _getFundingFee(totalContributedToPortalFunding);
             ERC20lib.transfer(collateralType, fraactionDaoMultisig, _fee);
             mint(address(this), valueToTokens(totalContributedToPortalFunding));
-            portalResult[portalNumber] = 1;
+            portalFundingResult[portalFundingNumber] = 1;
         } else {
-            portalResult[portalNumber] = 0;
+            portalFundingResult[portalFundingNumber] = 0;
         }
-        portalStatus = PortalStatus.INACTIVE;
+        portalFundingStatus = PortalFundingStatus.INACTIVE;
         // set the contract status & emit result
-        emit FinalizedPortal(
-            portalStatus, 
+        emit FinalizedPortalFunding(
+            portalFundingStatus, 
             _fee, 
             totalContributedToPortalFunding
         );
@@ -1187,122 +1381,190 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     
     // ======== External: final auction =========
     
-    /// @notice kick off an auction. Must send reservePrice in GHST
-    function startAuction(uint256 _value) external {
+    /// @notice kick off an auction. 
+    function startFinalAuction(uint256 _value) external payable {
         require(
             finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
-            "startAuction: no auction starts"
+            "startFinalAuction: no auction starts"
         );
         require(
-            fundingStatus == FundingStatus.FRACTIONALIZED,
-            "startAuction: FrAactionHub already having a new funding"
+            fundingStatus == FundingStatus.INACTIVE,
+            "startFinalAuction: FrAactionHub already having a new funding"
         );
         require(
-            portalStatus == PortalStatus.INACTIVE ||
-            portalStatus == PortalStatus.FRACTIONALIZED,
-            "startAuction: FrAactionHub already having a new portal funding"
+            portalFundingStatus == PortalFundingStatus.INACTIVE,
+            "startFinalAuction: FrAactionHub already having a new portal funding"
         );
+        uint256 value;
+        if (exitInGhst) {
+            value = _value;
+        } else {
+            value = msg.value;
+        }
         require(
-            _value >= reservePrice(), 
-            "startAuction: too low bid"
+            value >= reservePrice(), 
+            "startFinalAuction: too low bid"
         );
         require(
             votingTokens * 1000 >= ISettings(settingsContract).minVotePercentage() * totalSupply(), 
-            "startAuction: not enough voters"
+            "startFinalAuction: not enough voters"
         );
-        ERC20lib.transferFrom(ghstContract, msg.sender, address(this), _value);
-        fundingTime = block.timestamp + ISettings(settingsContract).auctionLength();
+        if (exitInGhst) ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+        auctionEnd = block.timestamp + ISettings(settingsContract).auctionLength();
         finalAuctionStatus = FinalAuctionStatus.ACTIVE;
-        livePrice = _value;
+        livePrice = value;
         winning = msg.sender;
-        emit Start(msg.sender, _value);
+        emit Start(msg.sender, value);
     }
 
     /// @notice an external function to bid on purchasing the SPDAO assets. The _value is the bid amount
-    function bid(uint256 _value) external nonReentrant {
+    function bid(uint256 _value) external payable nonReentrant {
         require(
             finalAuctionStatus == FinalAuctionStatus.ACTIVE, 
             "bid: auction is not live"
         );
+        uint256 value;
+        if (exitInGhst) {
+            value = _value;
+        } else {
+            value = msg.value;
+        }
         require(
-            _value >= minBid(), 
+            value >= minBid(), 
             "bid: too low bid"
         );
         require(
             block.timestamp < auctionEnd, 
             "bid: auction ended"
         );
-        ERC20lib.transferFrom(ghstContract, msg.sender, address(this), _value);
-        ERC20lib.transferFrom(ghstContract, address(this), winning, livePrice);
-        FraactionInterface(winning).notifyOverbid();
-        // If bid is within 15 minutes of auction end, extend auction
-        if (fundingTime - block.timestamp <= 15 minutes) {
-            fundingTime += 15 minutes;
+        if (exitInGhst) {
+            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+            ERC20lib.transferFrom(ghstContract, address(this), winning, livePrice);
+        } else {
+            transferMaticOrWmatic(winning, livePrice);
         }
-        livePrice = _value;
+        FraactionInterface(winning).notifyOverbid(livePrice);
+        // If bid is within 15 minutes of auction end, extend auction
+        if (auctionEnd - block.timestamp <= 15 minutes) {
+            auctionEnd += 15 minutes;
+        }
+        livePrice = value;
         winning = msg.sender;
-        emit Bid(msg.sender, _value);
+        emit Bid(msg.sender, value);
     }
 
     /// @notice an external function to end an auction after the timer has run out and transfer all the assets of the FrAactionHub to the winner
-    function endAuction() external nonReentrant {
+    function endFinalAuction(
+        uint256[] calldata _extNftsId,  
+        uint256[] calldata _ext1155Id,
+        uint256[] calldata _ext1155Quantity,
+        address[] calldata _extNftsAddress, 
+        address[] calldata _ext1155Address
+    ) external nonReentrant {
         require(
-            fauctionStatus == AuctionStatus.ACTIVE, 
-            "end: vault has already closed"
+            finalAuctionStatus == FinalAuctionStatus.ACTIVE, 
+            "endFinalAuction: vault has already closed"
         );
         require(
-            block.timestamp >= fundingTime, 
-            "end: auction live"
+            block.timestamp >= auctionEnd, 
+            "endFinalAuction: auction live"
         );
-        auctionStatus = AuctionStatus.ENDED;
-        mergeTo = winning;
-        finalTreasury = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-        emit Won(winning, livePrice);
+        require(
+            _extNftsId.length == _extNftsAddress.length &&
+            _ext1155Id.length == _ext1155Quantity.length &&
+            _ext1155Quantity.length == _ext1155Address.length,
+            "endFinalAuction: each NFT ID needs a corresponding token address"
+        );
+        if (mergerStatus == MergerStatus.INACTIVE) {
+            mergerStatus = MergerStatus.ACTIVE;
+            target = winning;
+            emit Won(winning, livePrice);
+        }
+        uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+        uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
+        ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
+        uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(address(this));
+        bool checkTickets;
+        for (uint i = 0; i < itemsStaking.length; i++) {
+            if (itemsStaking[i] != 0) {
+                checkTickets = true;
+                break;
+            }
+        }
+        if (realmsId.length > 0 && split == 0 || split == 1) {
+            transferRealms();
+        } else if (nftsId.length > 0 && split == 0 || split == 2) {
+            transferNfts();
+        } else if (itemsDiamond.length > 0 && split == 0 || 
+            split == 3 || 
+            checkTickets == true
+            ) {
+            transferItems();
+        } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
+            transferExternalNfts(_extNftsAddress, _extNftsId);
+        } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
+            transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
+        } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
+            transferExternalErc20(_extErc20Address, _extErc20Value);
+        } else {
+            if (totalNumberExtAssets != extAssetsTansferred) return;
+            uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
+            if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), target, bal);
+            if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
+            mergerStatus = MergerStatus.INACTIVE;
+            finalAuctionStatus = FinalAuctionStatus.ENDED;
+            if (exitInGhst) {
+                redeemedCollateral[ghstContract].push(livePrice);
+                if (collateralToRedeem[ghstContract] == 0) {
+                    collateralToRedeem[ghstContract] = true;
+                    collateralAvailable.push(ghstContract);
+                }
+            } else {
+                redeemedCollateral[thisContract].push(livePrice);
+                if (collateralToRedeem[thisContract] == 0) {
+                    collateralToRedeem[thisContract] = true;
+                    collateralAvailable.push(thisContract);
+                }
+            }
+            emit MergerFinalized(target);
+        }
     }
     
-    function notifyOverbid() external {
+    function notifyOverbid(uint256 _value) external {
         require(
             msg.sender == auctionTarget, 
             "notifyOverbid: caller not the auction target"
         );
-        overbidden = true;
+        if (fundingInGhst[fundingNumber]) {
+            totalTreasuryInGhst += _value;
+        } else {
+            totalTreasuryInMatic += _value;
+        }
         fundingStatus = FundingStatus.FUNDING;
         emit Overbidden(msg.sender);
     }
     // ======== External: final functions =========
     
-    /// @notice an external function to burn ERC20 tokens to receive GHST and/or MATIC from ERC721 token purchase when the final auction is completed
-    function finalClaim(address _contributor) external nonReentrant {
-        require(
-            auctionStatus == AuctionStatus.ENDED, 
-            "finalClaim: vault not closed yet"
-        );
-        require(
-            allClaimed == true,
-            "finalClaim: initial funding not claimed"
-        );
-        uint256 bal = balanceOf(_contributor);
-        require(bal > 0, "finalClaim: no tokens to cash out");
-        uint256 share = bal * IERC20Upgradeable(ghstContract).balanceOf(address(this)) / totalSupply(); // + MATIC
-        _burn(_contributor, bal);
-        ERC20lib.transfer(ghstContract, _contributor, share);
-        if (IERC20Upgradeable(ghstContract).balanceOf(address(this)) == 0) auctionStatus = AuctionStatus.INACTIVE;
-        emit Cash(_contributor, share);
-    }
-    
     /// @notice an external function to burn all the FrAactionSPDAO ERC20 tokens to receive the ERC721 and (if any) ERC1155/ERC20 tokens
-    function redeem() external nonReentrant {
+    function redeem(
+        address[] calldata _extErc20Address,
+        address[] calldata _extNftsAddress, 
+        address[] calldata _ext1155Address,
+        uint256[] calldata _extErc20Value,
+        uint256[] calldata _extNftsId,  
+        uint256[] calldata _ext1155Id,
+        uint256[] calldata _ext1155Quantity
+    ) external nonReentrant {
         require(
-            auctionStatus == AuctionStatus.INACTIVE, 
+            finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
             "redeem: no auction starts"
         );
         require(
-            fundingStatus == FundingStatus.FRACTIONALIZED,
+            fundingStatus == FundingStatus.INACTIVE,
             "redeem: FrAactionHub already having a new funding"
         );
         require(
-            portalStatus == PortalStatus.INACTIVE ||
-            portalStatus == PortalStatus.FRACTIONALIZED,
+            portalFundingStatus == PortalFundingStatus.INACTIVE,
             "redeem: FrAactionHub already having a new portal funding"
         );
         require(
@@ -1310,81 +1572,54 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "redeem: caller do not own the entire token supply"
         );
         require(
-            mergerStatus == MergerStatus.INACTIVE || 
-            target == _mergerTarget, 
-            "redeem: merger already active"
+            mergerStatus == MergerStatus.INACTIVE ||
+            msg.sender == target, 
+            "redeem: merger is active"
         );
-        _burn(msg.sender, totalSupply());
+        require(
+            demergerStatus == DemergerStatus.INACTIVE, 
+            "redeem: demerger is active"
+        );
         if (mergerStatus == MergerStatus.INACTIVE) {
             target = msg.sender;
             mergerStatus = MergerStatus.ACTIVE
-            emit MergerInitiated(mergerTarget);
+            emit MergerInitiated(target);
         }
-        uint256[] memory realmsIds = DiamondInterface(realmsContract).tokenIdsOfOwner(target);
-        uint32[] memory nftIds = DiamondInterface(diamondContract).tokenIdsOfOwner(target);
-        ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(target);
-        uint256[] memory tickets = DiamondInterface(stakingContract).balanceOfAll(target);
+        uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+        uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
+        ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
+        uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(address(this));
         bool checkTickets;
-        for (uint i = 0; i < tickets.length; i++) {
+        for (uint i = 0; i < itemsStaking.length; i++) {
             if (itemsStaking[i] != 0) {
                 checkTickets = true;
-                break;
+                    break;
             }
         }
-        if (realmsIds.length > 0 && split == 0 || split == 1) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("transferRealms()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else if (nftIds.length > 0 && split == 0 || split == 2) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("transferNfts()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
+        if (realmsId.length > 0 && split == 0 || split == 1) {
+            transferRealms();
+        } else if (nftsId.length > 0 && split == 0 || split == 2) {
+            transferNfts();
         } else if (itemsDiamond.length > 0 && split == 0 || 
             split == 3 || 
             checkTickets == true
             ) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("transferItems()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-            // transfer money remaining in the Hub
+            transferItems();
+        } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
+            transferExternalNfts(_extNftsAddress, _extNftsId);
+        } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
+            transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
+        } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
+            transferExternalErc20(_extErc20Address, _extErc20Value);
         } else {
+            if (totalNumberExtAssets != extAssetsTansferred) return;
+            uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
+            if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), msg.sender, bal);
+            if (address(this).balance > 0) transferMaticOrWmatic(msg.sender, address(this).balance);
+            _burn(msg.sender, totalSupply());
             mergerStatus == MergerStatus.INACTIVE;
-            emit MergerAssetsTransferred(address(this));
+            emit Redeemed(msg.sender);
         }
-        if (realmsIds.length > 50 ||
-                
-        ) {
-            feesContributor[msg.sender]++;
-        }
-        if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
-            mint(msg.sender, ISettings(settingsContract).feesReward());
-            feesContributor[msg.sender] = 0;
-        }
-        emit Redeem(msg.sender);
     }
     
     // ======== External: staking functions =========
@@ -1490,6 +1725,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         fundingStatus = FundingStatus.INACTIVE;
         mergerStatus = MergerStatus.INACTIVE;
         demergerStatus = DemergerStatus.INACTIVE;
+        portalFundingStatus = PortalFundingStatus.INACTIVE;
         finalAuctionStatus = FinalAuctionStatus.INACTIVE;
     }
 
@@ -1534,16 +1770,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     // ============ Internal: Price and fees ============
     
-    /**
-     * @notice The net price to be submitted
-     * during the funding round and after 
-     * deduction of the fee for FrAactionDAO
-     * @return _netPrice the submitted price
-     */
-    function getFundingNetPrice() internal view returns (uint256 _netPrice) {
-        _netPrice = ((totalContributedToFunding + usedTreasury) * 1000) / (1000 + ISettings(settingsContract).fundingFee());
-    }
-    
      /**
      * @notice The gross price to be submitted
      * during the funding round and including 
@@ -1571,7 +1797,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @return _maxBid the maximum submitted bid
      */
     function getMaxBid() internal view returns (uint256 _maxBid) {
-       _maxBid = ((totalContributedToFunding + _value) * 1000) / (1000 + ISettings(settingsContract).fundingFee());
+       _maxBid = ((totalContributedToFunding + usedTreasury) * 1000) / (1000 + ISettings(settingsContract).fundingFee());
     }
    
     // ============ Internal: claim ============
@@ -1583,19 +1809,18 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @return _tokenAmount the amount of fractional NFT tokens owed to the contributor
      * @return _GhstAmount the amount of GHST owed to the contributor
      */
-    function calculateTokensAndGhstOwed(
+    function calculateTokensOwed(
+        bool _inGhst,
         address _contributor, 
         bool _successFunding, 
         uint256 _fundingNumber
     )
         internal
         view
-        returns (uint256 _tokenAmount, uint256 _ghstAmount)
+        returns (uint256 _tokenAmount, uint256 _ghstOrMaticAmount)
     {
         uint256 contribution = ownerContributedToFunding[_contributor][_fundingNumber];
-        if (!contribution) {
-            continue;
-        } else { 
+        if (contribution > 0) {
             if (_successFunding == true) {
                 if (isBid(_fundingNumber)) {
                     uint256 _totalUsedForBid = _totalGhstUsedForBid(_contributor);
@@ -1616,7 +1841,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 // all of the contributor's GHST for this last new funding round should be returned
                 _ghstAmount = contribution;
                 ownerTotalContributed[_contributor] -= _ghstAmount;
-                totalContributedToFrAactionHub -= _ghstAmount;
+                totalContributedToFraactionHubInGhstInGhst -= _ghstAmount;
             }
         }
     }
@@ -1628,26 +1853,24 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @return _tokenAmount the amount of fractional NFT tokens owed to the contributor
      * @return _GhstAmount the amount of GHST owed to the contributor
      */
-     function portalCalculateTokensAndGhstOwed(
-         address _contributor, 
-         bool _successPortalFunding, 
-         uint256 _portalFundingNumber
+     function portalCalculateTokensOwed(
+        address _contributor, 
+        bool _successPortalFunding, 
+        uint256 _portalFundingNumber
     )
         internal
         view
         returns (uint256 _tokenAmount, uint256 _collateralAmount, address _collateralType)
     {
         uint256 contribution = ownerContributedToPortalFunding[_contributor][_portalFundingNumber];
-        if (!contribution) {
-            continue;
-        } else {  
+        if (contribution > 0) {  
             if (_successPortalFunding == true) {
                 _tokenAmount = valueToTokens(contribution);
             } else {
                 _collateralAmount = ownerContributedCollateral[_contributor][_portalFundingNumber];
                 _collateralType = ownerCollateralType[_contributor][_portalFundingNumber];
-                ownerTotalContributed[_contributor] -= contribution;
-                totalContributedToFraactionHub -= contribution;
+                ownerTotalContributedInGhst[_contributor] -= contribution;
+                totalContributedToFraactionHubInGhst -= contribution;
             }
         }
     }
@@ -1746,8 +1969,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         // Try to transfer MATIC to the given recipient.
         if (!maticTransfer(_to, _value)) {
             // If the transfer fails, wrap and send as WMATIC
-            weth.deposit{value: _value}();
-            weth.transfer(_to, _value);
+            wrappedMaticContract.deposit{value: _value}();
+            wrappedMaticContract.transfer(_to, _value);
             // At this point, the recipient can unwrap WMATIC.
         }
     }

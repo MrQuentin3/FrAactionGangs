@@ -48,16 +48,17 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     // ============ Enums ============
     
     // State Transitions:
-    //   (1) INACTIVE on deploy
-    //   (2) FUNDING on startFunding()
-    //   (3) PURCHASED on purchase()
-    //   (4) COMPLETED, FRACTIONALIZED and FAILED on finalize()
+    //   (1) INACTIVE on deploy, finalizeBid() or finalizePurchase()
+    //   (2) ACTIVE on startPurchase(), startFundraising() or startBid()
+    //   (2) FUNDING on confirmFunding()
+    //   (3) SUBMITTED on purchase() or submitBid()
+    //   (4) COMPLETED or FAILED on finalizeBid() or finalizePurchase()
     enum fundingStatus {
         INACTIVE,
+        ACTIVE,
         FUNDING,
-        PURCHASED,
+        SUBMITTED,
         COMPLETED,
-        FRACTIONALIZED,
         FAILED
     }
     
@@ -65,15 +66,18 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     FundingStatus public fundingStatus;
     
     // State Transitions:
-    //   (1) INACTIVE or ACTIVE on deploy
-    //   (2) BIDSUBMITTED, ENDED or FAILED on finalizeBid()
-    enum auctionStatus { 
+    //   (1) INACTIVE claim()
+    //   (2) ACTIVE on startFinalAuction()
+    //   (3) ENDED on endFinalAuction()
+    //   (4) BURNING on Claim()
+    enum FinalAuctionStatus { 
         INACTIVE, 
         ACTIVE,
-        ENDED
+        ENDED,
+        BURNING
     }
 
-    AuctionStatus public auctionStatus;
+    FinalAuctionStatus public finalAuctionStatus;
     
     // State Transitions:
     //   (1) INACTIVE on deploy
@@ -109,7 +113,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     //   (2) FUNDING on startAavegotchiFunding()
     //   (3) CLAIMED on claimAavegotchi()
     //   (4) COMPLETED, FRACTIONALIZED and FAILED on finalizeAavegotchi()
-    enum PortalStatus {
+    enum PortalFundingStatus {
         INACTIVE,
         FUNDING,
         CLAIMED,
@@ -118,7 +122,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         FAILED
     }
     
-    PortalStatus public portalStatus;
+    PortalFundingStatus public portalStatus;
     
     // ============ Public Constant ============
     
@@ -315,7 +319,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     string public symbol;
     
     // Address of the Aavegotchi Diamond contract
-    address public constant diamondContract = 
+    address public constant diamondContract;
     
     // Address of the GHST contract
     address public constant ghstContract;
@@ -856,17 +860,19 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     // ========= CORE FUNCTIONS ============
 
     function voteForTransfer(
-        uint256[] calldata _nftsIds, 
-        uint256[] calldata _extNftsIds,
-        uint256[] calldata _ext1155Ids, 
-        uint256[] calldata _realmsIds, 
-        uint256[] calldata _itemsIds, 
-        uint256[] calldata _itemsQuantity, 
-        uint256[] calldata _ext1155Quantity,
-        uint256[7] calldata _ticketsQuantity, 
-        address[] calldata _extNftsAddress, 
+        uint256[] calldata _nftsId,
+        uint256[] calldata _extNftsId,
+        uint256[] calldata _ext1155Id, 
+        uint256[] calldata _realmsId, 
+        uint256[] calldata _itemsId, 
+        uint256[] calldata _itemsQuantity,
+        uint256[] calldata _extErc20Value, 
+        uint256[] calldata _ext1155Quantity, 
+        uint256[7] calldata _ticketsQuantity,
+        address[] calldata _extErc20Address,
+        address[] calldata _extNftsAddress,
         address[] calldata _ext1155Address,
-        uint256 _idsToVoteFor, 
+        uint256 _idToVoteFor, 
         address _transferTo
         ) external nonReentrant {
         require(
@@ -878,84 +884,95 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "voteForTransfer: caller not an owner of the FrAactionHub"
         );
         require(
-            _itemsIds.length == _itemsQuantity.length &&
-            _extNftsIds.length == _extNftsAddress.length &&
-            _ext1155Ids.length == _ext1155Address.length &&
+            _itemsId.length == _itemsQuantity.length &&
+            _extNftsId.length == _extNftsAddress.length &&
+            _ext1155Id.length == _ext1155Address.length &&
             _ext1155Address.length == _ext1155Quantity.length &&, 
             "voteForTransfer: input arrays lengths are not matching"
         );
         require(
-            _nftsIds.length + 
-            _realmsIds.length + 
-            _itemsIds.length +
+            _nftsId.length + 
+            _realmsId.length + 
+            _itemsId.length +
             _itemsQuantity.length +
             _ticketsQuantity.length + 
-            _extNftsIds.length + 
+            _extNftsId.length + 
             _extNftsAddress.length +
-            _ext1155Ids.length +
+            _ext1155Id.length +
             _ext1155Quantity.length +
             _ext1155Address.length +
             =< ISettings(settingsContract).MaxTransferLimit(), 
             "voteForTransfer: cannot transfer more than the GovSettings allowed limit"
         );
-        if (_nftsIds.length > 0 ||
-            _realmsIds.length > 0 ||
-            _itemsIds.length > 0 ||
-            _ticketsIds.length > 0 ||
-            _extNftsIds.length > 0 ||
-            _ext1155Ids.length > 0 
+        if (_nftsId.length > 0 ||
+            _realmsId.length > 0 ||
+            _itemsId.length > 0 ||
+            _ticketsId.length > 0 ||
+            _extNftsId.length > 0 ||
+            _ext1155Id.length > 0 
         ) {
-            if (_idsToVoteFor != proposedIndex + 1) {
-                require(
-                    _idsToVoteFor == proposedIndex + 1, 
-                    "voteForTransfer: user submitting a new demerger has to vote for it"
-                );
-            }
             require(
-                transferTo != address(0), 
+                _idToVoteFor == votedIndex, 
+                "voteForTransfer: user submitting a new demerger has to vote for it"
+            );
+            require(
+                _transferTo != address(0), 
                 "voteForTransfer: address to transfer to cannot be zero"
             );
             ownershipCheck(
-                _nftsIds,
-                _extNftsIds,
-                _ext1155Ids, 
-                _realmsIds, 
-                _itemsIds, 
+                _nftsId, 
+                _realmsId, 
+                _itemsId, 
                 _itemsQuantity, 
-                _ext1155Quantity, 
-                _ticketsQuantity,
-                _extNftsAddress,
-                _ext1155Address,
-                1
+                _ticketsQuantity, 
+                true
             );
+            ownershipCheckExt(
+                _extNftsId, 
+                _ext1155Id, 
+                _extErc20Value, 
+                _ext1155Quantity, 
+                _extErc20Address, 
+                _extNftsAddress, 
+                _ext1155Address, 
+                true
+            );
+            votedIndex++;
+            transferTo[_idToVoteFor] = _transferTo;
         }
-        if (votersTransfer[msg.sender][_idsToVoteFor] == true) {
-            if (balanceOf(msg.sender) != currentTransferBalance[msg.sender][_idsToVoteFor]) 
-                votesTotalTransfer[_idsToVoteFor] -= currentTransferBalance[msg.sender][_idsToVoteFor];
+        if (votersTransfer[msg.sender][_idToVoteFor] == true) {
+            if (balanceOf(msg.sender) != currentTransferBalance[msg.sender][_idToVoteFor]) 
+                votesTotalTransfer[_idToVoteFor] -= currentTransferBalance[msg.sender][_idToVoteFor];
         } else {
-            votersTransfer[msg.sender][_idsToVoteFor] = true;
+            votersTransfer[msg.sender][_idToVoteFor] = true;
         }
-        if (balanceOf(msg.sender) != currentTransferBalance[msg.sender][_idsToVoteFor]) {
-            votesTotalTransfer[_idsToVoteFor] += balanceOf(msg.sender);
-            currentTransferBalance[msg.sender][_idsToVoteFor] = balanceOf(msg.sender);
+        if (balanceOf(msg.sender) != currentTransferBalance[msg.sender][_idToVoteFor]) {
+            votesTotalTransfer[_idToVoteFor] += balanceOf(msg.sender);
+            currentTransferBalance[msg.sender][_idToVoteFor] = balanceOf(msg.sender);
         }
-        if (votesTotalTransfer[_idsToVoteFor] * 1000 >= ISettings(settingsContract).minTransferVotePercentage() * totalSupply()) {
+        if (votesTotalTransfer[_idToVoteFor] * 1000 >= ISettings(settingsContract).minTransferVotePercentage() * totalSupply()) {
             if (demergerStatus != DemergerStatus.ACTIVE) {
                 ownershipCheck(
-                    _nftsIds,
-                    _extNftsIds,
-                    _ext1155Ids, 
-                    _realmsIds, 
-                    _itemsIds, 
+                    _nftsId, 
+                    _realmsId, 
+                    _itemsId, 
                     _itemsQuantity, 
-                    _ext1155Quantity, 
-                    _ticketsQuantity,
-                    _extNftsAddress,
-                    _ext1155Address,
-                    0
+                    _ticketsQuantity, 
+                    true
                 );
-                indexToTransfer = _idsToVoteFor;
+                ownershipCheckExt(
+                    _extNftsId, 
+                    _ext1155Id, 
+                    _extErc20Value, 
+                    _ext1155Quantity, 
+                    _extErc20Address, 
+                    _extNftsAddress, 
+                    _ext1155Address, 
+                    true
+                );
                 demergerStatus = DemergerStatus.ACTIVE;
+                votedIndex = _idToVoteFor;
+                target = transferTo[_idToVoteFor];
                 emit TransferActive(target);
             }
             if (!realmsDemerged || split = 1) {
@@ -963,18 +980,29 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 if (split == 0) realmsDemerged = true;
             } else if (!nftsDemerged || split = 2) {
                 transferNfts();
-                if (split == 0) {
-                    nftsDemerged = true;
-                }
+                if (split == 0) nftsDemerged = true;
             } else if (!itemsDemerged || split = 3) {
                 transferItems();
                 if (split == 0) itemsDemerged = true;
+            } else if (!extNftsDemerged || split = 4) {
+                transferExternalNfts();
+                if (split == 0) extNftsDemerged = true;
+            } else if (!ext1155Demerged || split = 5) {
+                transferExternal1155();
+                if (split == 0) ext1155Demerged = true;
+            } else if (!extErc20Demerged || split = 6) {
+                transferExternalErc20();
+                if (split == 0) extErc20Demerged = true;
             } else {
+                if (inMatic)
                 demergerStatus = DemergerStatus.INACTIVE;
-                emit AssetsTransferred(address(this));
                 realmsDemerged = false;
                 nftsDemerged = false;
                 itemsDemerged = false;
+                extNftsDemerged = false;
+                ext1155Demerged = false;
+                extErc20Demerged = false;
+                DemergerAssetsTransferred(address(this));
             }
             feesContributor[msg.sender]++;
             if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
@@ -984,43 +1012,79 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
     }
     
-    function finalizeTarget() external {
+    function confirmFinalizedMerger() external {
         require(
-            ISettings(settingsContract).fraactionHubRegistry(msg.sender) > 0,
-            "finalizeTarget: not a registered FrAactionHub contract"
+            msg.sender == target,
+            "confirmFinalizedMerger: sender is not the merger target"
         );
         require(
             mergerStatus == MergerStatus.ACTIVE,
-            "finalizeTarget: merger not active"
+            "confirmFinalizedMerger: merger not active"
         );
         target = address(0);
+        delete proposedMerger[_mergerTarget];
         mergerStatus == MergeStatus.INACTIVE;
+        finalAuctionStatus = FinalAuctionStatus.ENDED;
     }
     
-    function initiateMerger() external {
+    function initiateMergerFrom() external {
         require(
             ISettings(settingsContract).fraactionHubRegistry(msg.sender) > 0,
-            "initiateMerger: not a registered FrAactionHub contract"
+            "initiateMergerFrom: not a registered FrAactionHub contract"
         );
         require(
             mergerStatus == MergerStatus.INACTIVE, 
-            "initiateMerger: caller not an owner of the FrAactionHub"
+            "initiateMergerFrom: caller not an owner of the FrAactionHub"
         );
         proposedMerger[msg.sender] = true;
         timeMerger = block.timestamp;
         emit MergerProposed(msg.sender);
     }
+
+    function confirmMerger() external {
+        require(
+            msg.sender == target, 
+            "confirmMerger: caller not the merger target"
+        );
+        merging = true;
+        emit confirmedMerger(msg.sender);
+    }
+
+    function confirmAssetsTransferred() external {
+        require(
+            msg.sender == target, 
+            "confirmAssetsTransferred caller not the merger target"
+        );
+        mergerStatus = MergerStatus.ASSETSTRANSFERRED;
+        emit MergerAssetsTransferred(msg.sender);
+    }
+
+    function initiateMergerTo() external {
+        require(
+            ISettings(settingsContract).fraactionHubRegistry(msg.sender) > 0,
+            "initiateMergerTo: not a registered FrAactionHub contract"
+        );
+        require(
+            mergerStatus == MergerStatus.INACTIVE, 
+            "initiateMergerTo: caller not an owner of the FrAactionHub"
+        );
+        proposedMergerFrom[_mergerTarget] = true;
+        emit MergerProposedTo(msg.sender);
+    }
     
     function voteForMerger(
+        bool proposeMergerTo,
         address _mergerTarget, 
-        uint256[] calldata _extNftsIds,  
-        uint256[] calldata _ext1155Ids,
-        uint256[] calldata _ext1155Quantity,
+        address[] calldata _extErc20Address,
         address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address
+        address[] calldata _ext1155Address,
+        uint256[] calldata _extErc20Value,
+        uint256[] calldata _extNftsId,  
+        uint256[] calldata _ext1155Id,
+        uint256[] calldata _ext1155Quantity
     ) external nonReentrant {
         require(
-            fundingStatus == FundingStatus.FRACTIONALIZED, 
+            fundingStatus == FundingStatus.INACTIVE, 
             "voteForMerger: FrAactionHub not fractionalized yet"
         );
         require(
@@ -1028,46 +1092,57 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "voteForMerger: not a registered FrAactionHub contract"
         );
         require(
-            balanceOf(msg.sender) > 0, 
+            balanceOf(msg.sender) > 0 ||
+            FraactionInterface(target).balanceOf(msg.sender) > 0, 
             "voteForMerger: user not an owner of the FrAactionHub"
         );
         require(
-            mergerStatus == MergerStatus.INACTIVE || 
-            target == _mergerTarget, 
-            "voteForMerger: merger already active"
-        );
-        require(
-            _extNftsIds.length == _extNftsAddress.length &&
-            _ext1155Ids.length == _ext1155Quantity.length
+            _extNftsId.length == _extNftsAddress.length &&
+            _extErc20Address.length == _extErc20Value.length &&
+            _ext1155Id.length == _ext1155Quantity.length &&
             _ext1155Quantity.length == _ext1155Address.length,
-            "voteForMerger: each NFT ID needs a corresponding token address"
+            "voteForMerger: each token ID or value needs a corresponding token address"
         );
-        if (timeMerger > ISettings(settingsContract).minMergerTime()) {
-            timeMerger = 0;
-            if (proposedMerger[_mergerTarget] && target != _mergerTarget) proposedMerger[_mergerTarget] = false;
-        }
-        if (targetReserveTotal[_tokenId] != 0) targetReserveTotal[_mergerTarget] = FraactionInterface(_mergerTarget).reserveTotal();
-        if (votersMerger[msg.sender][_mergerTarget] == true) {
-            if (balanceOf(msg.sender) != currentMergerBalance[msg.sender][_mergerTarget]) 
-                votesTotalMerger[_mergerTarget] -= currentMergerBalance[msg.sender][_mergerTarget];
-        } else {
-            votersMerger[msg.sender][_mergerTarget] = true;
-        }
-        if (balanceOf(msg.sender) != currentMergerBalance[msg.sender][_mergerTarget]) { 
-            votesTotalMerger[_mergerTarget] += balanceOf(msg.sender);
-            currentMergerBalance[msg.sender][_mergerTarget] = balanceOf(msg.sender);
+        if (merging == false) {
+            if (proposeMergerTo) proposedMergerTo[_mergerTarget] = true;
+            if (timeMerger > ISettings(settingsContract).minMergerTime()) {
+                timeMerger = 0;
+                if (proposedMerger[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
+                    delete proposedMerger[_mergerTarget];
+                } else if (proposedMergerTo[_mergerTarget] && mergerStatus == MergerStatus.ACTIVE) {
+                    mergerStatus = MergerStatus.INACTIVE;
+                    delete proposedMergerTo[_mergerTarget];
+                } else if (proposedMergerFrom[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
+                    delete proposedMergerFrom[_mergerTarget];
+                } else {
+                    mergerStatus = MergerStatus.INACTIVE;
+                }
+            }
+            if (targetReserveTotal[_mergerTarget] == 0) targetReserveTotal[_mergerTarget] = FraactionInterface(_mergerTarget).reserveTotal();
+            if (votersMerger[msg.sender][_mergerTarget] == true) {
+                if (balanceOf(msg.sender) != currentMergerBalance[msg.sender][_mergerTarget]) 
+                    votesTotalMerger[_mergerTarget] -= currentMergerBalance[msg.sender][_mergerTarget];
+            } else {
+                votersMerger[msg.sender][_mergerTarget] = true;
+            }
+            if (balanceOf(msg.sender) != currentMergerBalance[msg.sender][_mergerTarget]) { 
+                votesTotalMerger[_mergerTarget] += balanceOf(msg.sender);
+                currentMergerBalance[msg.sender][_mergerTarget] = balanceOf(msg.sender);
+            }
         }
         if (votesTotalMerger[_mergerTarget] * 1000 >= ISettings(settingsContract).minMergerVotePercentage() * totalSupply()) {
             if (proposedMerger[_mergerTarget] == true) {
-                if (mergerStatus == MergerStatus.INACTIVE) {
+                if (!proposedMergerTo[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
                     target = _mergerTarget;
-                    mergerStatus = MergerStatus.ACTIVE
+                    mergerStatus = MergerStatus.ACTIVE;
+                    merging = true;
+                    FraactionInterface(target).confirmMerger();
                     emit MergerInitiated(mergerTarget);
                 }
-                uint256[] memory realmsIds = DiamondInterface(realmsContract).tokenIdsOfOwner(target);
-                uint32[] memory nftIds = DiamondInterface(diamondContract).tokenIdsOfOwner(target);
-                ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(target);
-                uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(target);
+                uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+                uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
+                ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
+                uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(address(this));
                 bool checkTickets;
                 for (uint i = 0; i < itemsStaking.length; i++) {
                     if (itemsStaking[i] != 0) {
@@ -1075,74 +1150,34 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                         break;
                     }
                 }
-                if (realmsIds.length > 0 && split == 0 || split == 1) {
-                    (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("transferRealms()"));
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "voteForMerger: initiating merger order failed: ",
-                                returnData
-                            )
-                        )
-                    );
-                } else if (nftIds.length > 0 && split == 0 || split == 2) {
-                    (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("mergeNfts()"));
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "voteForMerger: initiating merger order failed: ",
-                                returnData
-                            )
-                        )
-                    );
+                if (realmsId.length > 0 && split == 0 || split == 1) {
+                    transferRealms();
+                } else if (nftsId.length > 0 && split == 0 || split == 2) {
+                    transferNfts();
                 } else if (itemsDiamond.length > 0 && split == 0 || 
                     split == 3 || 
                     checkTickets == true
                     ) {
-                    (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("mergeItems()"));
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "voteForMerger: initiating merger order failed: ",
-                                returnData
-                            )
-                        )
-                    );
-                } else if (_extNftsIds.length > 0 && split == 0 || split == 4) {
-                    (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("mergeNfts()"));
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "voteForMerger: initiating merger order failed: ",
-                                returnData
-                            )
-                        )
-                    );
-                } else if (_ext1155Ids.length > 0 && split == 0 || split == 5) {
-                    (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("mergeNfts()"));
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "voteForMerger: initiating merger order failed: ",
-                                returnData
-                            )
-                        )
-                    );
+                    transferItems();
+                } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
+                    transferExternalNfts(_extNftsAddress, _extNftsId);
+                } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
+                    transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
+                } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
+                    transferExternalErc20(_extErc20Address, _extErc20Value);
                 } else {
+                    if (totalNumberExtAssets != extAssetsTansferred) return;
+                    uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
+                    if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), target, bal);
+                    if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
                     mergerStatus == MergerStatus.ASSETSTRANSFERRED;
+                    extAssetsTansferred = 0;
+                    totalNumberExtAssets = nonTransferredAssets;
+                    nonTransferredAssets = 0;
+                    FraactionInterface(target).confirmAssetsTransferred();
                     emit MergerAssetsTransferred(address(this));
                 }
-                if (realmsIds.length > 50 ||
+                if (realmsId.length > 50 ||
                 
                 ) {
                     feesContributor[msg.sender]++;
@@ -1151,122 +1186,22 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     mint(msg.sender, ISettings(settingsContract).feesReward());
                     feesContributor[msg.sender] = 0;
                 }
-            } else {
+                votesTotalMerger[_mergerTarget] = 0;
+            } else if (proposedMergerTo[_mergerTarget]) {
                 target = _mergerTarget;
-                (bool success, bytes memory returnData) = 
-                    target.call(abi.encodeWithSignature("initiateMerger()"));
-                require(
-                    success,
-                    string(
-                        abi.encodePacked(
-                            "voteForMerger: initiating merger order failed: ",
-                            returnData
-                        )
-                    )
-                );
                 mergerStatus = MergerStatus.ACTIVE;
                 timeMerger = block.timestamp;
+                merging = true;
+                FraactionInterface(target).initiateMergerTo();
+                emit MergerInitiatedTo(target);
+            } else {
+                target = _mergerTarget;
+                mergerStatus = MergerStatus.ACTIVE;
+                FraactionInterface(target).initiateMergerFrom();
+                timeMerger = block.timestamp;
+                votesTotalMerger[_mergerTarget] = 0;
                 emit MergerInitiated(target);
             }
-            votesTotalMerger[_mergerTarget] = 0;
-        }
-    }
-
-    function postAuctionMerge(
-        uint256[] calldata _extNftsIds,  
-        uint256[] calldata _ext1155Ids,
-        uint256[] calldata _ext1155Quantity,
-        address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address
-    ) public {
-        require(
-            _extNftsIds.length == _extNftsAddress.length &&
-            _ext1155Ids.length == _ext1155Quantity.length
-            _ext1155Quantity.length == _ext1155Address.length,
-            "postAuctionMerge: each NFT ID needs a corresponding token address"
-        );
-        if (mergerStatus == MergerStatus.INACTIVE) {
-            target = auctionTarget;
-            mergerStatus = MergerStatus.ACTIVE
-            emit MergerInitiated(target);
-        }
-        uint256[] memory realmsIds = DiamondInterface(realmsContract).tokenIdsOfOwner(target);
-        uint32[] memory nftIds = DiamondInterface(diamondContract).tokenIdsOfOwner(target);
-        ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(target);
-        uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(target);
-        bool checkTickets;
-        for (uint i = 0; i < itemsStaking.length; i++) {
-            if (itemsStaking[i] != 0) {
-                checkTickets = true;
-                break;
-            }
-        }
-        if (realmsIds.length > 0 && split == 0 || split == 1) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("transferRealms()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else if (nftIds.length > 0 && split == 0 || split == 2) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("mergeNfts()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else if (itemsDiamond.length > 0 && split == 0 || 
-            split == 3 || 
-            checkTickets == true
-            ) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("mergeItems()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else if (_extNftsIds.length > 0 && split == 0 || split == 4) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("mergeItems()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else if (_ext1155Ids.length > 0 && split == 0 || split == 5) {
-            (bool success, bytes memory returnData) = 
-            target.call(abi.encodeWithSignature("mergeItems()"));
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "voteForMerger: initiating merger order failed: ",
-                        returnData
-                    )
-                )
-            );
-        } else {
-            mergerStatus == MergerStatus.MERGED;
-            MergerAssetsTransferred(address(this));
         }
     }
 
@@ -1276,38 +1211,49 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "finalizeMerger: items not transferred yet"
         );
         require(
-            balanceOf(msg.sender) > 0, 
+            balanceOf(msg.sender) > 0 ||
+            FraactionInterface(target).balanceOf(msg.sender) > 0, 
             "finalizeMerger: user not an owner of the FrAactionHub"
         );
         address[] memory ownersFrom = FraactionInterface(mergerTarget).getOwners();
-        uint256 max = ISettings(settingsContract).maxOwnersArrayLength();
         uint256 startIndex = 0;
         uint256 endIndex = ownersFrom.length;
         if (split == 0) {
+            maxOwnersArrayLength = ISettings(settingsContract).maxOwnersArrayLength();
             uint256 agreedReserveTotal = FraactionInterface(mergerTarget).targetReserveTotal(address(this));
             uint256 agreedReserveTotalFrom = targetReserveTotal[mergerTarget];
             newShareFrom = totalSupply() * agreedReserveTotalFrom / agreedReserveTotal;
-            if (ownersFrom.length > max) {
-                if (ownersFrom.length % max > 0) {
-                    multiple = ownersFrom.length / max + 1;
+            if (ownersFrom.length > maxOwnersArrayLength) {
+                if (ownersFrom.length % maxOwnersArrayLength > 0) {
+                    multiple = ownersFrom.length / maxOwnersArrayLength + 1;
                 } else {
-                    multiple = ownersFrom.length / max;
+                    multiple = ownersFrom.length / maxOwnersArrayLength;
                 }
-                split = 6;
+                split = 7;
                 splitCounter++;
             }
-            endIndex = max;
+            endIndex = maxOwnersArrayLength;
         } else {
-            if (ownersFrom.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
+            if (ownersFrom.length % maxOwnersArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
                 endIndex = ownersFrom.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxOwnersArrayLength;
             }
             splitCounter++;
         }
         bool existing;
+        if (splitCounter == multiple) {
+            if (split > 0) {
+                split = 0;
+                splitCounter = 0;
+                multiple = 0;
+            }
+            mergerStatus = MergerStatus.MERGED;
+            FraactionInterface(mergerTarget).confirmFinalizedMerger();
+            emit MergerFinalized(mergerTarget);
+        }
         if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
         if (startIndex > ownersFrom.length) return;
         for (uint i = startIndex; i < endIndex; i++) {
@@ -1317,20 +1263,10 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 }
             }
             if (existing == false) ownersAddress.push(ownersFrom[i]);
-            totalContributedToFraactionHub += FraactionInterface(mergerTarget).totalContributedToFraactionHub();
             mint(
                 ownersFrom[i], 
                 newShareFrom * FraactionInterface(mergerTarget).balanceOf(ownersFrom[i]) / FraactionInterface(mergerTarget).totalSupply()
             );
-        }
-        if (splitCounter == multiple) {
-            if (split > 0) {
-                split = 0;
-                splitCounter = 0;
-                multiple = 0;
-            }
-            mergerStatus = MergerStatus.MERGED;
-            emit MergerFinalized(mergerTarget);
         }
         feesContributor[msg.sender]++;
         if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
@@ -1339,82 +1275,44 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
     }
     
-    function transferRealms() public nonReentrant {
-        require(
-            msg.sender == target,
-            "transferRealms: caller not approved"
-        );
-        require(
-            mergerStatus == MergerStatus.ACTIVE ||
-            demergerStatus == DemergerStatus.ACTIVE,
-            "transferRealms: merger, transfer or demerger not active"
-        );
+    function transferRealms() internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            arrayLength = votedRealms[votedIndexRealms[indexToTransfer]].length;
+            arrayLength = votedRealms[votedIndexRealms[votedIndex].length;
         } else {
             arrayLength = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this)).length;
         }
-        uint256[] memory realmsIds = new uint256[](arrayLength);
+        uint256[] memory realmsId = new uint256[](arrayLength);
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            realmsIds = votedRealms[votedIndexRealms[indexToTransfer]];
+            realmsId = votedRealms[votedIndexRealms[votedIndex]];
         } else {
-            realmsIds = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+            realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
         }
         uint256 startIndex;
-        uint256 endIndex = realmsIds.length;
+        uint256 endIndex = realmsId.length;
         if (split == 0) {
-            maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
-            if (realmsIds.length > max) {
-                endIndex = max;
+            maxRealmsArrayLength = ISettings(settingsContract).maxRealmsArrayLength();
+            if (realmsId.length > maxRealmsArrayLength) {
+                endIndex = maxRealmsArrayLength;
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (realmsIds.length % max > 0) {
-                        multiple = realmsIds.length / max + 1;
+                    if (realmsId.length % maxRealmsArrayLength > 0) {
+                        multiple = realmsId.length / maxRealmsArrayLength + 1;
                     } else {
-                        multiple = realmsIds.length / max;
+                        multiple = realmsId.length / maxRealmsArrayLength;
                     }
                     split = 1;
                     splitCounter++;
                 }
             }
         } else {
+            if (realmsId.length % maxRealmsArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxRealmsArrayLength + 1;
+                endIndex = realmsId.length;
             } else {
-            if (realmsIds.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
-                endIndex = realmsIds.length;
-            } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxRealmsArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxRealmsArrayLength;
             }
             splitCounter++;
-        }
-        if (_endIndex > realmsIds.length) _endIndex = nftIds.length;
-        if (_startIndex > realmsIds.length) return;
-        for (uint i = _startIndex; i < _endIndex; i++) {
-            (bool success, bytes memory returnData) =
-                realmsContract.call(
-                    abi.encodeWithSignature(
-                        "safeTransferFrom(
-                            address,
-                            address,
-                            uint256,
-                            bytes
-                        )", 
-                        address(this), 
-                        target, 
-                        realmsIds[i], 
-                        new bytes(0)
-                    )
-                );
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "mergeRealms: merge realms order failed: ",
-                        returnData
-                    )
-                )
-            );
         }
         if (splitCounter == multiple) {
             if (split) {
@@ -1424,27 +1322,25 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             }
             emit TransferredRealms(transferTo);
         }
+        if (_endIndex > realmsId.length) _endIndex = realmsId.length;
+        if (_startIndex > realmsId.length) return;
+        uint256[] memory batchIds = new uint256[](endIndex - startIndex + 1);
+        for (uint i = _startIndex; i < _endIndex; i++) {
+            batchIds[i] = realmsId[i];
+        }
+        RealmsInterface(realmsContract).safeBatchTransfer(address(this), target, batchIds, new bytes(0));
     }
     
-    function transferNfts() public nonReentrant {
-        require(
-            msg.sender == target,
-            "transferNfts: caller not approved"
-        );
-        require(
-            mergerStatus == MergerStatus.ACTIVE ||
-            demergerStatus == DemergerStatus.ACTIVE,
-            "transferNfts: merger, transfer or demerger not active"
-        );
+    function transferNfts() internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            arrayLength = votedNfts[votedIndexNfts[indexToTransfer]].length;
+            arrayLength = votedNfts[votedIndexNfts[votedIndex].length;
         } else {
             arrayLength = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this)).length;
         }
         uint256[] memory nftsIds = new uint256[](arrayLength);
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            nftIds = votedNfts[votedIndexNfts[indexToTransfer]];
+            nftIds = votedNfts[votedIndexNfts[votedIndex]];
         } else {
             nftIds = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
         }
@@ -1452,55 +1348,27 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         uint256 endIndex = nftsIds.length;
         if (split == 0) {
             maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
-            if (nftIds.length > max) {
-                endIndex = max;
+            if (nftIds.length > maxNftArrayLength) {
+                endIndex = maxNftArrayLength;
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (nftIds.length % max > 0) {
-                        multiple = nftIds.length / max + 1;
+                    if (nftIds.length % maxNftArrayLength > 0) {
+                        multiple = nftIds.length / maxNftArrayLength + 1;
                     } else {
-                        multiple = nftIds.length / max;
+                        multiple = nftIds.length / maxNftArrayLength;
                     }
-                    split = 1;
+                    split = 2;
                     splitCounter++;
                 }
             }
         } else {
-            if (nftIds.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
+            if (nftIds.length % maxNftArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxNftArrayLength + 1;
                 endIndex = nftIds.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxNftArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxNftArrayLength;
             }
             splitCounter++;
-        }
-        if (endIndex > nftIds.length) endIndex = nftIds.length;
-        if (startIndex > nftIds.length) return;
-        for (uint i = startIndex; i < endIndex; i++) {
-            (bool success, bytes memory returnData) =
-                diamondContract.call(
-                    abi.encodeWithSignature(
-                        "safeTransferFrom(
-                            address,
-                            address,
-                            uint256,
-                            bytes
-                        )", 
-                        address(this), 
-                        target, 
-                        nftIds[i], 
-                        new bytes(0)
-                    )
-                );
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "mergeNfts: merge nfts order failed: ",
-                        returnData
-                    )
-                )
-            );
         }
         if (splitCounter == multiple) {
             if (split > 0) {
@@ -1510,9 +1378,16 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             }
             emit TransferredNfts(target);
         }
+        if (endIndex > nftIds.length) endIndex = nftIds.length;
+        if (startIndex > nftIds.length) return;
+        uint256[] memory batchIds = new uint256[](endIndex - startIndex + 1);
+        for (uint i = startIndex; i < endIndex; i++) {
+            batchIds[i] = nftIds[i];
+        }
+        DiamondInterface(diamondContract).safeBatchTransferFrom(address(this), target, batchIds, new bytes(0));
     }
     
-    function transferItems() public nonReentrant {
+    function transferItems() internal {
         require(
             msg.sender == target,
             "transferItems: caller not approved"
@@ -1522,20 +1397,21 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             demergerStatus == DemergerStatus.ACTIVE,
             "transferItems: merger, transfer or demerger not active"
         );
+        uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            arrayLength = votedItemsDemerger[votedIndexItems[indexToTransfer]].length;
+            arrayLength = votedItemsDemerger[votedIndexItems[votedIndex]].length;
         } else {
-            arrayLength = DiamondInterface(diamondContract).itemBalances(this.address).length;
+            ItemIdIO[] memory items = DiamondInterface(diamondContract).itemBalances(this.address);
+            arrayLength = items.length;
         } 
         ItemIdIO[] memory items = new ItemIdIO[](arrayLength);
         uint256[] memory ids = new uint256[](arrayLength);
         uint256[] memory quantities = new uint256[](arrayLength);
         uint256 startIndex;
-        uint256 arrayLength;
-        uint256 endIndex;
+        uint256 endIndex = arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            ids = votedItems[votedIndexItems[indexToTransfer]];
-            quantities = votedItemsQuantity[votedIndexItemsQuantity[indexToTransfer]];
+            ids = votedItems[votedIndexItems[votedIndex]];
+            quantities = votedItemsQuantity[votedIndexItemsQuantity[votedIndex]];
             endIndex = ids.length;
         } else {
             items = DiamondInterface(diamondContract).itemBalances(this.address);
@@ -1543,13 +1419,13 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         if (split == 0) {
             maxItemsArrayLength = ISettings(settingsContract).maxItemsArrayLength();
-            if (items.length > max ) {
-                endIndex = max;
+            if (arrayLength > maxItemsArrayLength) {
+                endIndex = maxItemsArrayLength;
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (items.length % max > 0) {
-                        multiple = items.length / max + 1;
+                    if (arrayLength % maxItemsArrayLength > 0) {
+                        multiple = arrayLength / maxItemsArrayLength + 1;
                     } else {
-                        multiple = items.length / max;
+                        multiple = arrayLength / maxItemsArrayLength;
                     }
                     split = 3;
                     splitCounter++;
@@ -1560,7 +1436,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 uint256[] memory idsTickets = new uint256[](7);
                 uint256[] memory quantityTickets = new uint256[](7);
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    quantityTickets = votedTicketsQuantity[votedIndexTicketsQuantity[indexToTransfer]];
+                    quantityTickets = votedTicketsQuantity[votedIndexTicketsQuantity[votedIndex]];
                 } else {
                     quantityTickets = DiamondInterface(stakingContract).balanceOfAll(this.address);
                 }
@@ -1571,76 +1447,19 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     }
                 }
                 if (exist == true) {
-                    (bool success, bytes memory returnData) = 
-                        stakingContract.call(
-                            abi.encodeWithSignature(
-                                "safeBatchTransferFrom(
-                                    address,
-                                    address,
-                                    uint256[],
-                                    uint256[],
-                                    bytes
-                                )", 
-                                address(this), 
-                                target, 
-                                idsTickets, 
-                                quantityTickets, 
-                                new bytes(0)
-                            )
-                        );
-                    require(
-                        success,
-                        string(
-                            abi.encodePacked(
-                                "mergeItems: merge items order failed: ",
-                                returnData
-                            )
-                        )
-                    );
+                    IERC1155Upgradeable(stakingContract).safeBatchTransferFrom(address(this), target, idsTickets, quantityTickets, new bytes(0));
                 }
             }
         } else {
-            if (ids.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
+            if (ids.length % maxItemsArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxItemsArrayLength + 1;
                 endIndex = ids.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxItemsArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxItemsArrayLength;
             }
             splitCounter++;
         }
-        if (endIndex > ids.length) endIndex = ids.length;
-        if (startIndex > ids.length) return;
-        for (uint i = startIndex; i < endIndex; i++) {
-            ids[i] = items[i].itemId;
-            quantities[i] = items[i].balance;
-        }
-        (bool success, bytes memory returnData) = 
-            diamondContract.call(
-                abi.encodeWithSignature(
-                    "safeBatchTransferFrom(
-                        address,
-                        address,
-                        uint256[],
-                        uint256[],
-                        bytes
-                    )", 
-                    address(this), 
-                    target, 
-                    ids, 
-                    quantities, 
-                    new bytes(0)
-                    )
-            );
-        require(
-            success,
-            string(
-                abi.encodePacked(
-                    "mergeItems: merge items order failed: ",
-                    returnData
-                )
-            )
-        );
         if (splitCounter == multiple) {
             if (split > 0) {
                 split = 0;
@@ -1649,95 +1468,134 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             }
             emit TransferredItems(target);
         }
+        if (endIndex > ids.length) endIndex = ids.length;
+        if (startIndex > ids.length) return;
+        uint256[] memory batchIds = new uint256[](endIndex - startIndex + 1);
+        uint256[] memory batchQuantities = new uint256[](endIndex - startIndex + 1);
+        for (uint i = startIndex; i < endIndex; i++) {
+            if (mergerStatus = MergerStatus.ACTIVE) {
+                batchIds[i] = items[i].itemId;
+                batchQuantities[i] = items[i].balance;
+            } else {
+                batchIds[i] = ids[i];
+                batchQuantities[i] = quantities[i];
+            }
+        }
+        IERC1155Upgradeable(stakingContract).safeBatchTransferFrom(address(this), target, batchIds, batchQuantities, new bytes(0));
     }
 
-    function transferExternalNfts(uint256[] calldata _extNftsIds, uint256[] calldata _extNftsAddress) public nonReentrant {
-        require(
-            msg.sender == target,
-            "transferExternalNfts: caller not approved"
-        );
-        require(
-            mergerStatus == MergerStatus.ACTIVE ||
-            demergerStatus == DemergerStatus.ACTIVE,
-            "transferExternalNfts: merger, transfer or demerger not active"
-        );
+    function transferExternalErc20(address[] memory _extErc20Address, address[] memory _extErc20Value) internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            arrayLength = votedExtNfts[votedIndexExtNfts[indexToTransfer]].length;
+            arrayLength = votedExtErc20[votedIndexExtErc20[votedIndex]].length;
         } else {
-            for (uint i = 0; i < _extNftsToTransfer.length; i++) {
-                require(
-                    _extNftsAddress != address(0),
-                    "transferExternalNfts: NFT address cannot be null"
-                );
-            }
-            arrayLength = _extNftsToTransfer.length;
+            arrayLength = _extErc20Value.length;
         }
-        uint256[] memory nftAddress = new uint256[](arrayLength);
-        uint256[] memory nftsIds = new uint256[](arrayLength);
+        uint256[] memory erc20Address = new uint256[](arrayLength);
+        uint256[] memory erc20Value = new uint256[](arrayLength);
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            nftIds = votedExtNfts[votedIndexExtNfts[indexToTransfer]];
-            nftAddress = votedExtNftsAddress[votedIndexExtAddress[indexToTransfer]];
+            erc20Value = votedExtErc20Value[votedIndexExtErc20[votedIndex]];
+            erc20Address = votedExtErc20Address[votedIndexExtErc20Address[votedIndex]];
         } else {
-            nftIds = _extNftsIds;
-            nftAddress = _extNftsAddress;
+            erc20Value = _extErc20Value;
+            erc20Address = _extErc20Address;
         }
         uint256 startIndex;
-        uint256 endIndex;
+        uint256 endIndex = erc20Value.length;
         if (split == 0) {
-            maxNftArrayLength = ISettings(settingsContract).maxNftArrayLength();
-            if (nftIds.length > max) {
-                endIndex = max;
+            maxExtErc20ArrayLength = ISettings(settingsContract).maxExtErc20ArrayLength();
+            if (erc20Value.length > maxExtErc20ArrayLength) {
+                endIndex = maxExtErc20ArrayLength;
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (nftIds.length % max > 0) {
-                        multiple = nftIds.length / max + 1;
+                    if (erc20Value.length % maxExtErc20ArrayLength > 0) {
+                        multiple = erc20Value.length / maxExtErc20ArrayLength + 1;
                     } else {
-                        multiple = nftIds.length / max;
+                        multiple = erc20Value.length / maxExtErc20ArrayLength;
                     }
-                    split = 1;
+                    split = 6;
                     splitCounter++;
                 }
             }
         } else {
-            if (nftsIds.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
-                endIndex = nftsIds.length;
+            if (erc20Value.length % maxExtErc20ArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxExtErc20ArrayLength + 1;
+                endIndex = erc20Value.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxExtErc20ArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxExtErc20ArrayLength;
             }
             splitCounter++;
         }
-        if (endIndex > nftIds.length) endIndex = nftIds.length;
-        if (startIndex > nftIds.length) return;
-        if (demergerStatus == DemergerStatus.ACTIVE) {
-            for (uint i = startIndex; i < endIndex; i++) {
-                (bool success, bytes memory returnData) =
-                    nftAddress[i].call(
-                        abi.encodeWithSignature(
-                            "safeTransferFrom(
-                                address,
-                                address,
-                                uint256,
-                                bytes
-                            )", 
-                            address(this), 
-                            target, 
-                            nftIds[i], 
-                            new bytes(0)
-                        )
-                    );
-                require(
-                    success,
-                    string(
-                        abi.encodePacked(
-                            "mergeNfts: merge nfts order failed: ",
-                            returnData
-                        )
-                    )
-                );
-                delete ownedNft[nftAddress[i]][nftIds[i]];
+        if (splitCounter == multiple) {
+            if (split > 0) {
+                split = 0;
+                splitCounter = 0;
+                multiple = 0;
             }
+            emit TransferredExtErc20(target);
+        }
+        if (endIndex > erc20Value.length) endIndex = erc20Value.length;
+        if (startIndex > erc20Value.length) return;
+        uint256 assetCounter;
+        for (uint i = startIndex; i < endIndex; i++) {
+            if (mergerStatus == MergerStatus.ACTIVE) {
+                require(
+                    ownedErc20[erc20Address[i]] >= erc20Value[i],
+                    "transferExternalErc20: not owned ERC20 token"
+                );
+                assetCounter++;
+            }
+            try LibERC20.transferFrom(erc20Address[i], addresse(this), target, erc20Value[i]) {
+                ownedErc20[erc20Address[i]] -= erc20Value[i];
+            } catch {
+                nonTransferredAssets++;
+                emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
+            }
+        }
+        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter; 
+    }
+
+    function transferExternalNfts(address[] memory _extNftsAddress, uint256[] memory _extNftsId) internal {
+        uint256 arrayLength;
+        if (demergerStatus == DemergerStatus.ACTIVE) {
+            arrayLength = votedExtNfts[votedIndexExtNfts[votedIndex].length;
+        } else {
+            arrayLength = _extNftsAddress.length;
+        }
+        uint256[] memory nftsAddress = new uint256[](arrayLength);
+        uint256[] memory nftsId = new uint256[](arrayLength);
+        if (demergerStatus == DemergerStatus.ACTIVE) {
+            nftsId = votedExtNfts[votedIndexExtNfts[votedIndex]];
+            nftsAddress = votedExtNftsAddress[votedIndexExtAddress[votedIndex]];
+        } else {
+            nftsId = _extNftsId;
+            nftsAddress = _extNftsAddress;
+        }
+        uint256 startIndex;
+        uint256 endIndex = nftsId.length;
+        if (split == 0) {
+            maxExtNftArrayLength = ISettings(settingsContract).maxExtNftArrayLength();
+            if (nftsId.length > maxExtNftArrayLength) {
+                endIndex = maxExtNftArrayLength;
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    if (nftsId.length % maxExtNftArrayLength > 0) {
+                        multiple = nftsId.length / maxExtNftArrayLength + 1;
+                    } else {
+                        multiple = nftsId.length / maxExtNftArrayLength;
+                    }
+                    split = 4;
+                    splitCounter++;
+                }
+            }
+        } else {
+            if (nftsId.length % maxExtNftArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxExtNftArrayLength + 1;
+                endIndex = nftsId.length;
+            } else {
+                startIndex = splitCounter * maxExtNftArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxExtNftArrayLength;
+            }
+            splitCounter++;
         }
         if (splitCounter == multiple) {
             if (split > 0) {
@@ -1747,124 +1605,158 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             }
             emit TransferredExtNfts(target);
         }
+        if (endIndex > nftsId.length) endIndex = nftsId.length;
+        if (startIndex > nftsId.length) return;
+        uint256 assetCounter;
+        for (uint i = startIndex; i < endIndex; i++) {
+            if (mergerStatus == MergerStatus.ACTIVE) {
+                require(
+                    ownedNfts[nftsAddress[i]][nftsId[i]] == true,
+                    "transferExternalErc20: not owned ERC20 token"
+                );
+                assetCounter++;
+            }
+            try IERC721Upgradeable(nftsAddress[i]).safeTransferFrom(address(this), target, nftsId[i]) {
+                delete ownedNfts[nftAddress[i]][nftsId[i]];
+            } catch {
+                nonTransferredAssets++;
+                emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
+            }
+        }
+        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter;
     }
 
     function transferExternal1155(
-        uint256[] calldata _ext1155Ids, 
-        uint256[] calldata _ext1155Quantity,
-        address[] calldata _ext1155Address
-    ) public nonReentrant {
-        require(
-            msg.sender == target,
-            "transferExternal1155: caller not approved"
-        );
-        require(
-            mergerStatus == MergerStatus.ACTIVE ||
-            demergerStatus == DemergerStatus.ACTIVE,
-            "transferExternal1155: merger, transfer or demerger not active"
-        );
+        address[] memory _ext1155Address,
+        uint256[] memory _ext1155Ids, 
+        uint256[] memory _ext1155Quantity
+    ) internal {
+        uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            arrayLength = votedExt1155Transfer[votedIndexExt1155[indexToTransfer]].length;
+            arrayLength = votedExt1155Transfer[votedIndexExt1155[votedIndex]].length;
         } else {
-            arrayLength = _ext1155ToTransfer.length;
+            arrayLength = _ext1155Ids.length;
         } 
         uint256[] memory ids1155 = new uint256[](arrayLength);
         uint256[] memory quantity1155 = new uint256[](arrayLength);
         address[] memory address1155 = new uint256[](arrayLength);
-        uint256 startIndex;
-        uint256 arrayLength;
-        uint256 endIndex;
         if (demergerStatus == DemergerStatus.ACTIVE) {
-            ids1155 = votedExt1155[votedIndexExt1155[indexToTransfer]];
-            quantity1155 = votedExt1155Quantity[votedIndexExt1155Quantity[indexToTransfer]];
-            address1155 = votedExt1155Address[votedIndexExt1155Address[indexToTransfer]];
-            endIndex = ids1155.length;
+            ids1155 = votedExt1155[votedIndexExt1155[votedIndex]];
+            quantity1155 = votedExt1155Quantity[votedIndexExt1155Quantity[votedIndex]];
+            address1155 = votedExt1155Address[votedIndexExt1155Address[votedIndex]];
         } else {
             ids1155 = _ext1155Ids;
             quantity1155 = _ext1155Quantity;
             address1155 = _ext1155Address;
-            endIndex = _ext1155ToTransfer.length;
         }
+        uint256 startIndex;
+        uint256 endIndex = ids1155.length;
         if (split == 0) {
-            maxItemsArrayLength = ISettings(settingsContract).maxItemsArrayLength();
-            if (ids55.length > max) {
-                endIndex = max;
+            maxExt1155ArrayLength = ISettings(settingsContract).maxExt1155ArrayLength();
+            if (ids1155.length > maxExtItemsArrayLength) {
+                endIndex = maxExtItemsArrayLength;
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (ids1155.length % max > 0) {
-                        multiple = ids1155.length / max + 1;
+                    if (ids1155.length % maxExtItemsArrayLength > 0) {
+                        multiple = ids1155.length / maxExtItemsArrayLength + 1;
                     } else {
-                        multiple = ids1155.length / max;
+                        multiple = ids1155.length / maxExtItemsArrayLength;
                     }
                     split = 5;
                     splitCounter++;
                 }
             } 
         } else {
-            if (ids1155.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
+            if (ids1155.length % maxExtItemsArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxExtItemsArrayLength + 1;
                 endIndex = ids1155.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxExtItemsArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxExtItemsArrayLength;
             }
             splitCounter++;
         }
-        if (endIndex > idsDiamond.length) endIndex = idsDiamond.length;
-        if (startIndex > idsDiamond.length) return;
-        for () {}
-            (bool success, bytes memory returnData) = 
-                address1155[i].call(
-                    abi.encodeWithSignature(
-                        "safeBatchTransferFrom(
-                            address,
-                            address,
-                            uint256[],
-                            uint256[],
-                            bytes
-                        )", 
-                        address(this), 
-                        target, 
-                        ids1155[i], 
-                        quantity1155[i], 
-                        new bytes(0)
-                        )
-                );
-            require(
-                success,
-                string(
-                    abi.encodePacked(
-                        "mergeItems: merge items order failed: ",
-                        returnData
-                    )
-                )
-            );
-            if (demergerStatus == DemergerStatus.ACTIVE) {
-                owned1155[address1155[i]][ids1155[i]] -= quantity1155[i];
-            } else {
-                delete owned1155[address1155[i]][ids1155[i]];
-            }
         if (splitCounter == multiple) {
             if (split > 0) {
                 split = 0;
                 splitCounter = 0;
                 multiple = 0;
             }
-            emit TransferredItems(target);
+            emit TransferredExt1155(target);
         }
+        if (endIndex > ids1155.length) endIndex = ids1155.length;
+        if (startIndex > ids1155.length) return;
+        uint256 assetCounter;
+        for (uint i = startIndex; i < endIndex; i++) {
+            if (mergerStatus == MergerStatus.ACTIVE) {
+                    require(
+                    ownedErc1155[address1155[i]][ids1155[i]] == quantity1155[i],
+                    "transferExternal1155: NFT token address cannot be null"
+                );
+            }
+            if (i == startIndex) {
+                uint256 redundancyCounter;
+                uint256[] memory indexRedundancy = new indexRedundancy[](endIndex - startIndex + 1);
+                for (uint j = i + 1; j < endIndex; j++) {
+                    if (address1155[i] == address1155[j]) {
+                        if (mergerStatus == MergerStatus.ACTIVE) {
+                            require(
+                                ownedErc1155[address1155[j]][ids1155[j]] == quantity1155[j],
+                                "transferExternal1155: NFT token address cannot be null"
+                            );
+                        }
+                        ownedErc1155[address1155[j]][ids1155[j]] -= quantity1155[j];
+                        indexRedundancy[redundancyCounter] = j;
+                        assetCounter++;
+                        redundancyCounter++;
+                    }
+                    if (redundancyCounter > 0) {
+                        uint256 indexCounter;
+                        uint256[] memory batchIds = new uint256[](redundancyCounter);
+                        uint256[] memory batchQuantity = new uint256[](redundancyCounter);
+                        for (uint k = startIndex; k < endIndex; k++) {
+                            if (k == indexRedundancy[indexCounter]) {
+                                batchIds[indexCounter] = ids1155[k];
+                                batchQuantity[indexCounter] = quantity1155[k];
+                                indexRedundancy[indexCounter] = 0;
+                                indexCounter++;
+                            }
+                        }
+                        try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
+                            ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
+                        } catch {
+                            nonTransferredAssets++;
+                            emit NonTransferredErc1155(address1155[i], ids1155[i], quantity1155[i]);
+                        }
+                    }
+                    redundancyCounter = 0;
+                }
+            } else {
+                try IERC1155Upgradeable(address1155[i]).safeTransferFrom(address(this), target, ids1155[i], quantity1155[i], new bytes(0)) {
+                ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
+                } catch {
+                    nonTransferredAssets++;
+                    emit NonTransferredErc1155(address1155[i], ids1155[i], quantity1155[i]);
+                }
+                assetCounter++;
+            }
+        }  
+        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter; 
     }
                             
     function voteForDemerger(
-        uint256[] calldata _nftsIds, 
-        uint256[] calldata _extNftsIds,
-        uint256[] calldata _ext1155Ids, 
-        uint256[] calldata _realmsIds, 
-        uint256[] calldata _itemsIds, 
-        uint256[] calldata _itemsQuantity, 
-        uint256[] calldata _ext1155Quantity,
-        uint256[7] calldata _ticketsQuantity, 
-        address[] calldata _extNftsAddress, 
+        uint256[] calldata _nftsId,
+        uint256[] calldata _extNftsId,
+        uint256[] calldata _ext1155Id, 
+        uint256[] calldata _realmsId, 
+        uint256[] calldata _itemsId, 
+        uint256[] calldata _itemsQuantity,
+        uint256[] calldata _extErc20Value, 
+        uint256[] calldata _ext1155Quantity, 
+        uint256[7] calldata _ticketsQuantity,
+        address[] calldata _extErc20Address,
+        address[] calldata _extNftsAddress,
         address[] calldata _ext1155Address,
-        uint256 _idsToVoteFor, 
+        uint256 _idToVoteFor, 
         string calldata _name,  
         string calldata _symbol
     ) external nonReentrant {
@@ -1885,82 +1777,91 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "voteForDemerger: active merger"
         );
         require(
-            _itemsIds.length == _itemsQuantity.length &&
-            _extNftsIds.length == _extNftsAddress.length &&
-            _ext1155Ids.length == _ext1155Address.length &&
+            _itemsId.length == _itemsQuantity.length &&
+            _extNftsId.length == _extNftsAddress.length &&
+            _ext1155Id.length == _ext1155Address.length &&
             _ext1155Address.length == _ext1155Quantity.length &&, 
             "voteForDemerger: input arrays lengths are not matching"
         );
         require(
-            _nftsIds.length + 
-            _realmsIds.length + 
-            _itemsIds.length +
+            _nftsId.length + 
+            _realmsId.length + 
+            _itemsId.length +
             _itemsQuantity.length +
             _ticketsQuantity.length + 
-            _extNftsIds.length + 
+            _extNftsId.length + 
             _extNftsAddress.length +
-            _ext1155Ids.length +
+            _ext1155Id.length +
             _ext1155Quantity.length +
             _ext1155Address.length +
             =< ISettings(settingsContract).MaxTransferLimit(), 
             "voteForDemerger: cannot transfer more than the GovSettings allowed limit"
         );
-        if (_nftsIds.length > 0 ||
-            _realmsIds.length > 0 ||
-            _itemsIds.length > 0 ||
-            _ticketsIds.length > 0 ||
-            _extNftsIds.length > 0 ||
-            _ext1155Ids.length > 0 
+        if (_nftsId.length > 0 ||
+            _realmsId.length > 0 ||
+            _itemsId.length > 0 ||
+            _ticketsId.length > 0 ||
+            _extNftsId.length > 0 ||
+            _ext1155Id.length > 0 
         ) {
-            if (_idsToVoteFor != proposedIndex + 1) {
-                require(
-                    _idsToVoteFor == proposedIndex + 1, 
-                    "voteFordemerger: user submitting a new demerger has to vote for it"
-                );
-            }
-            ownershipCheck(
-                _nftsIds,
-                _extNftsIds,
-                _ext1155Ids, 
-                _realmsIds, 
-                _itemsIds, 
-                _itemsQuantity, 
-                _ext1155Quantity, 
-                _ticketsQuantity,
-                _extNftsAddress,
-                _ext1155Address,
-                1
+            require(
+                _idToVoteFor == votedIndex, 
+                "voteFordemerger: user submitting a new demerger has to vote for it"
             );
+            ownershipCheck(
+                _nftsId, 
+                _realmsId, 
+                _itemsId, 
+                _itemsQuantity, 
+                _ticketsQuantity, 
+                true
+            );
+            ownershipCheckExt(
+                _extNftsId, 
+                _ext1155Id, 
+                _extErc20Value, 
+                _ext1155Quantity, 
+                _extErc20Address, 
+                _extNftsAddress, 
+                _ext1155Address, 
+                true
+            );
+            votedIndex++;
         }
-        if (votersDemerger[msg.sender][_idsToVoteFor] == true) {
-            if (balanceOf(msg.sender) != currentDemergerBalance[msg.sender][_idsToVoteFor]) 
-                votesTotalDemerger[_idsToVoteFor] -= currentDemergerBalance[msg.sender][_idsToVoteFor];
+        if (votersDemerger[msg.sender][_idToVoteFor] == true) {
+            if (balanceOf(msg.sender) != currentDemergerBalance[msg.sender][_idToVoteFor]) 
+                votesTotalDemerger[_idToVoteFor] -= currentDemergerBalance[msg.sender][_idToVoteFor];
         } else {
-            votersDemerger[msg.sender][_idsToVoteFor] = true;
+            votersDemerger[msg.sender][_idToVoteFor] = true;
         }
         if (_name != "" && _symbol != "") {
-            if (demergerName[_idsToVoteFor] == "" && demergerSymbol[_idsToVoteFor] == "") {
-                demergerName[_idsToVoteFor] = _name;
-                demergerSymbol[_idsToVoteFor] = _symbol;
+            if (demergerName[_idToVoteFor] == "" && demergerSymbol[_idToVoteFor] == "") {
+                demergerName[_idToVoteFor] = _name;
+                demergerSymbol[_idToVoteFor] = _symbol;
             }
         }
-        if (balanceOf(msg.sender) != currentDemergerBalance[msg.sender][_idsToVoteFor]) {
-            votesTotalDemerger[_idsToVoteFor] += balanceOf(msg.sender);
-            currentDemergerBalance[msg.sender][_idsToVoteFor] = balanceOf(msg.sender);
+        if (balanceOf(msg.sender) != currentDemergerBalance[msg.sender][_idToVoteFor]) {
+            votesTotalDemerger[_idToVoteFor] += balanceOf(msg.sender);
+            currentDemergerBalance[msg.sender][_idToVoteFor] = balanceOf(msg.sender);
         }
-        if (votesTotalDemerger[_idsToVoteFor] * 1000 >= ISettings(settingsContract).minDemergerVotePercentage() * totalSupply()) {
+        if (votesTotalDemerger[_idToVoteFor] * 1000 >= ISettings(settingsContract).minDemergerVotePercentage() * totalSupply()) {
             ownershipCheck(
-                _nftsIds,
-                _extNftsIds,
-                _ext1155Ids, 
-                _realmsIds, 
-                _itemsIds, 
+                _nftsId, 
+                _realmsId, 
+                _itemsId, 
                 _itemsQuantity, 
+                _ticketsQuantity, 
+                false
+            );
+            ownershipCheckExt(
+                _extNftsId, 
+                _ext1155Id, 
+                _extErc20Value, 
                 _ext1155Quantity, 
-                _ticketsQuantity,
-                _extNftsAddress,
-                _ext1155Address,
-                0
+                _extErc20Address, 
+                _extNftsAddress, 
+                _ext1155Address, 
+                false
             );
             address fraactionFactoryContract = ISettings(settingsContract).fraactionFactoryContract();
             (bool success, bytes memory returnData) = 
@@ -1971,8 +1872,8 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                             string,
                             address
                         )", 
-                        demergerName[_idsToDemerger], 
-                        demergerSymbol[_idsToDemerger], 
+                        demergerName[_idToVoteFor], 
+                        demergerSymbol[_idToVoteFor], 
                         address(this)
                     )
                 );
@@ -1986,9 +1887,9 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 )
             );
             target = abi.decode(returnData, (address));
-            indexToTransfer = _idsToVoteFor;
+            votedIndex = _idToVoteFor;
             demergerStatus = DemergerStatus.ACTIVE;
-            emit DemergerActive(target, demergerName[_idsToVoteFor], demergerSymbol[_idsToVoteFor]);
+            emit DemergerActive(target, demergerName[_idToVoteFor], demergerSymbol[_idToVoteFor]);
             feesContributor[msg.sender]++;
             if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
                 mint(msg.sender, ISettings(settingsContract).feesReward());
@@ -1996,32 +1897,11 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             }
         }
     }
-    
-    function demergeFrom() external nonReentrant {
-        require(
-            demergerStatus == DemergerStatus.ACTIVE,
-            "demergeFrom: demerger not active"
-        );
-        FraactionInterface(target).demergeTo();
-        if (FraactionInterface(target).demergerStatus() == DemergerStatus.ASSETSTRANSFERRED) {
-            demergerStatus = DemergerStatus.ASSETSTRANSFERRED;
-            DemergerAssetsTransferred(address(this));
-        }
-        feesContributor[msg.sender]++;
-        if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
-            mint(msg.sender, ISettings(settingsContract).feesReward());
-            feesContributor[msg.sender] = 0;
-        }
-    }
 
     function demergeTo() external nonReentrant {
         require(
             demergerStatus == DemergerStatus.ACTIVE,
             "demergeTo: demerger not active"
-        );
-        require(
-            msg.sender == target,
-            "demergeTo: caller is not the demerger child contract"
         );
         if (!realmsDemerged || split = 1) {
             transferRealms();
@@ -2038,13 +1918,24 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         } else if (!ext1155Demerged || split = 5) {
             transferExternal1155();
             if (split == 0) ext1155Demerged = true;
+        } else if (!extErc20Demerged || split = 6) {
+            transferExternalErc20();
+            if (split == 0) extErc20Demerged = true;
         } else {
-            demergerStatus == DemergerStatus.ASSETSTRANSFERRED;
+            demergerStatus = DemergerStatus.INACTIVE;
+            FraactionInterface(target).confirmDemerger();
             realmsDemerged = false;
             nftsDemerged = false;
             itemsDemerged = false;
             extNftsDemerged = false;
             ext1155Demerged = false;
+            extErc20Demerged = false;
+            DemergerAssetsTransferred(address(this));
+        }
+        feesContributor[msg.sender]++;
+        if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
+            mint(msg.sender, ISettings(settingsContract).feesReward());
+            feesContributor[msg.sender] = 0;
         }
     }
 
@@ -2054,41 +1945,29 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "finalizeDemerger: demerger assets not transferred yet"
         );
         address[] memory ownersFrom = FraactionInterface(target).getOwners();
-        uint256 max = ISettings(settingsContract).maxOwnersArrayLength();
         uint256 startIndex = 0;
         uint256 endIndex = ownersFrom.length;
         if (split == 0) {
-            if (ownersFrom.length > max) {
-                if (ownersFrom.length % max > 0) {
-                    multiple = ownersFrom.length / max + 1;
+            maxOwnersArrayLength = ISettings(settingsContract).maxOwnersArrayLength();
+            if (ownersFrom.length > maxOwnersArrayLength) {
+                if (ownersFrom.length % maxOwnersArrayLength > 0) {
+                    multiple = ownersFrom.length / maxOwnersArrayLength + 1;
                 } else {
-                    multiple = ownersFrom.length / max;
+                    multiple = ownersFrom.length / maxOwnersArrayLength;
                 }
                 split = 7;
                 splitCounter++;
             }
-            endIndex = max;
+            endIndex = maxOwnersArrayLength;
         } else {
-            if (ownersFrom.length % max > 0 && splitCounter >= multiple - 1) {
-                startIndex = splitCounter * max + 1;
+            if (ownersFrom.length % maxOwnersArrayLength > 0 && splitCounter == multiple - 1) {
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
                 endIndex = ownersFrom.length;
             } else {
-                startIndex = splitCounter * max + 1;
-                endIndex = (splitCounter + 1) * max;
+                startIndex = splitCounter * maxOwnersArrayLength + 1;
+                endIndex = (splitCounter + 1) * maxOwnersArrayLength;
             }
             splitCounter++;
-        }
-        if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
-        if (startIndex > ownersFrom.length) return;
-        bool existing;
-        for (uint i = startIndex; i < endIndex; i++) {
-            ownersAddress.push(ownersFrom[i]);
-            ownerTotalContributed[ownersFrom[i]] += FraactionInterface(target).ownerTotalContributed(ownersFrom[i]);
-            totalContributedToFraactionHub += FraactionInterface(target).totalContributedToFraactionHub();
-            mint(
-                ownersFrom[i], 
-                FraactionInterface(demergerTarget).balanceOf(ownersFrom[i])
-            );
         }
         if (splitCounter == multiple) {
             if (split > 0) {
@@ -2097,9 +1976,18 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 multiple = 0;
             }
             demergerStatus = DemergerStatus.INACTIVE;
-            FraactionInterface(target).confirmDemerger();
             target = address(0);
             emit DemergerFinalized(target);
+        }
+        if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
+        if (startIndex > ownersFrom.length) return;
+        bool existing;
+        for (uint i = startIndex; i < endIndex; i++) {
+            ownersAddress.push(ownersFrom[i]);
+            mint(
+                ownersFrom[i], 
+                FraactionInterface(demergerTarget).balanceOf(ownersFrom[i])
+            );
         }
         feesContributor[msg.sender]++;
         if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
@@ -2111,98 +1999,65 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     function confirmDemerger() external {
         require(
             msg.sender == target,
-            "confirmDemerger: caller is not the demerger child contract"
+            "confirmDemerger: caller is not the demerger parent contract"
         );
         require(
-            demergerStatus == DemergerStatus.ASSETSTRANSFERRED, 
-            "confirmDemerger: demerger assets not transferred yet"
+            demergerStatus == DemergerStatus.ACTIVE, 
+            "confirmDemerger: demerger is not active
         );
-        demergerStatus = DemergerStatus.INACTIVE;
-        target = address(0);
+        demergerStatus = DemergerStatus.ASSETSTRANSFERRED;
+        DemergerAssetsTransferred(address(this));
     }
 
-    function ownershipCheck internal (
-        uint256[] calldata _nftsIds,
-        uint256[] calldata _extNftsIds,
-        uint256[] calldata _ext1155Ids, 
-        uint256[] calldata _realmsIds, 
-        uint256[] calldata _itemsIds, 
-        uint256[] calldata _itemsQuantity, 
-        uint256[] calldata _ext1155Quantity, 
-        uint256[7] calldata _ticketsQuantity,
-        address[] calldata _extNftsAddress,
-        address[] calldata _ext1155Address,
+    function ownershipCheck(
+        uint256[] memory _nftsId,
+        uint256[] memory _realmsId, 
+        uint256[] memory _itemsId, 
+        uint256[] memory _itemsQuantity,
+        uint256[7] memory _ticketsQuantity,
         bool _checkParams
-    ) external {
+    ) internal {
         uint256 counterOwned;
-        if (_nftsIds.length > 0) {
-            uint32[] memory nftsIds = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
-            for (uint i = 0; i < _nftsIds.length; i++) {
-                for (uint j = 0; j < nftsIds.length; j++) {
-                    if (_nftsIds[i] == nftsIds[j]) {
+        if (_nftsId.length > 0) {
+            uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
+            for (uint i = 0; i < _nftsId.length; i++) {
+                for (uint j = 0; j < nftsId.length; j++) {
+                    if (_nftsId[i] == nftsId[j]) {
                         counterOwned++;
                         break;
                     }
                 }
             }
         }
-        if (_extNftsIds.length > 0) {
-            for (uint i = 0; i < _extNftsIds.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _extNftsAddress[i] != address(0),
-                        "ownershipCheck: invalid NFT address"
-                    );
-                }
-                if (IERC721Upgradeable(_extNftsAddress[i]).ownerOf(_extNftsIds[i]) == address(this)) counterOwned++;
-            }
-        }
-        if (_realmsIds.length > 0) {
-            uint256[] memory realmsIds = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
-            for (uint i = 0; i < _realmsIds.length; i++) {
-                for (uint j = 0; j < realmsIds.length; j++) {
-                    if (_realmsIds[i] == realmsIds[j]) {
+        if (_realmsId.length > 0) {
+            uint32[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+            for (uint i = 0; i < _realmsId.length; i++) {
+                for (uint j = 0; j < realmsId.length; j++) {
+                    if (_realmsId[i] == realmsId[j]) {
                         counterOwned++;
                         break;
                     }
                 }
             }
         }
-        if (_itemsIds.length > 0) {
-            ItemIdIO[] memory itemsIds = DiamondInterface(diamondContract).itemBalances(address(this));
-            for (uint i = 0; i < _itemsIds.length; i++) {
+        if (_itemsId.length > 0) {
+            ItemIdIO[] memory balance = DiamondInterface(diamondContract).itemBalances(address(this));
+            for (uint i = 0; i < _itemsId.length; i++) {
                 if (_checkParams) {
                     require(
-                        _itemsIds[i] > 0 && _itemsQuantity[i] > 0,
+                        _itemsId[i] > 0 && _itemsQuantity[i] > 0,
                         "ownershipCheck: invalid item quantity"
                     );
                 }
-                for (uint j = 0; j < itemsIds.length; j++) {
-                    if (_itemsIds[i] == itemsIds[j].itemId) {
+                for (uint j = 0; j < balance.length; j++) {
+                    if (_itemsId[i] == balance[j].itemId) {
                         require(
-                            _itemsQuantity[i] <= itemsIds[j].balance,
+                            _itemsQuantity[i] <= balance[j].balance,
                             "ownershipCheck: proposed item quantities have to be equal or inferior to the owned items quantities"
                         );
                         counterOwned++;
                         break;
                     }
-                }
-            }
-        }
-        if (_ext1155Ids.length > 0) {
-            for (uint i = 0; i < _ext1155Ids.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _ext1155Quantity[i] > 0 && _ext1155Address[i] != address(0),
-                        "ownershipCheck: invalid item quantity or address"
-                    );
-                }
-                if (IERC1155Upgradeable(_ext1155Address[i]).balanceOf(address(this), _ext1155Ids[i]) > 0) {
-                    require(
-                        _ext1155Quantity[i] <= IERC1155Upgradeable(_ext1155Address[i]).balanceOf(address(this), _ext1155Ids[i]),
-                        "ownershipCheck: proposed item quantities have to be equal or inferior to the owned items quantities"
-                    );
-                    counterOwned++;
                 }
             }
         }
@@ -2213,62 +2068,127 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 if (_checkParams) {
                     if (_ticketsQuantity[i] == 0) check = true;
                 }
-                for (uint j = 0; j < ticketsCurrentQuantity.length; j++) {
-                    if (i == j) {
-                        require(
-                            _ticketsQuantity[i] <= ticketsCurrentQuantity[j],
-                            "ownershipCheck: proposed tickets quantities have to be equal or inferior to the owned tickets quantities"
-                        );
-                        counterOwned++;
-                        break;
-                    }
-                }
-            }
-            if (check) {
                 require(
-                    !check,
-                    "ownershipCheck: a ticket quantity has to be provided"
+                    _ticketsQuantity[i] <= ticketsCurrentQuantity[i],
+                    "ownershipCheck: proposed tickets quantities have to be equal or inferior to the owned tickets quantities"
                 );
+                counterOwned++;
             }
-        }
-        if (counterOwned != _nftsIds.length + _realmsIds.length + _itemsIds.length + _ticketsQuantity.length + _extNftsIds.length + _ext1155ToIds) {
             require(
-                counterOwned == _nftsIds.length + _realmsIds.length + _itemsIds.length + _ticketsQuantity.length + _extNftsIds.length + _ext1155ToIds,
-                "ownershipCheck: one token or more is not owned by the FrAactionHub"
+                !check,
+                "ownershipCheck: a ticket quantity has to be provided"
             );
         }
-        votedIndex++;
-        if (_nftsIds.length > 0) {
-            votedIndexNfts[votedIndex] = votedNfts.length;
-            votedNfts.push(_nftsToIds);
+        require(
+            counterOwned == _nftsId.length + _realmsId.length + _itemsId.length + _ticketsQuantity.length,
+            "ownershipCheck: one token or more is not owned by the FrAactionHub"
+        );
+        if (_checkParams) {
+            if (_nftsId.length > 0) {
+                votedIndexNfts[votedIndex] = votedNfts.length;
+                votedNfts.push(_nftsId);
+            }
+            if (_realmsId.length > 0) {
+                votedIndexRealms[votedIndex] = votedRealms.length;
+                votedRealms.push(_realmsId);
+            }
+            if (_itemsId.length > 0) {
+                votedIndexItems[votedIndex] = votedItems.length;
+                votedItems.push(_itemsId);
+                votedIndexItemsQuantity[votedIndex] = votedItemsQuantity.length;
+                votedItemsQuantity.push(_itemsQuantity);
+            }
+            if (_ticketsQuantity.length > 0) {
+                votedIndexTicketsQuantity[votedIndex] = votedTicketsQuantity.length;
+                votedTicketsQuantity.push(_ticketsQuantity);
+            }
         }
-        if (_realmsIds.length > 0) {
-            votedIndexRealms[votedIndex] = votedRealms.length;
-            votedRealms.push(_realmsIds);
+    }
+
+    function ownershipCheckExt(
+        uint256[] memory _extNftsId,
+        uint256[] memory _ext1155Id, 
+        uint256[] memory _extErc20Value, 
+        uint256[] memory _ext1155Quantity, 
+        address[] memory _extErc20Address,
+        address[] memory _extNftsAddress,
+        address[] memory _ext1155Address,
+        bool _checkParams
+    ) internal {
+        uint256 counterOwned;
+        if (_extNftsId.length > 0) {
+            for (uint i = 0; i < _extNftsId.length; i++) {
+                if (_checkParams) {
+                    require(
+                        _extNftsAddress[i] != address(0),
+                        "ownershipCheckExt: invalid NFT address"
+                    );
+                }
+                if (IERC721Upgradeable(_extNftsAddress[i]).ownerOf(_extNftsId[i]) == address(this)) counterOwned++;
+            }
         }
-        if (_itemsIds.length > 0) {
-            votedIndexItems[votedIndex] = votedItems.length;
-            votedItems.push(_itemsIds);
-            votedIndexItemsQuantity[votedIndex] = votedItemsQuantity.length;
-            votedItemsQuantity.push(_itemsQuantity);
+        if (_extErc20Value.length > 0) {
+            for (uint i = 0; i < _extErc20Value.length; i++) {
+                if (_checkParams) {
+                    require(
+                        _extErc20Value[i] > 0 && _extErc20Address[i] != address(0),
+                        "ownershipCheckExt: invalid item quantity or address"
+                    );
+                }
+                uint256 balance = IERC20Upgradeable(_extErc20Address[i]).balanceOf(address(this));
+                if (balance > 0) {
+                    require(
+                        _extErc20Value[i] <= balance,
+                        "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
+                    );
+                    counterOwned++;
+                }
+            }
         }
-        if (_ticketsQuantity.length > 0) {
-            votedIndexTicketsQuantity[votedIndex] = votedTicketsQuantity.length;
-            votedTicketsQuantity.push(_ticketsQuantity);
+        if (_ext1155Id.length > 0) {
+            for (uint i = 0; i < _ext1155Id.length; i++) {
+                if (_checkParams) {
+                    require(
+                        _ext1155Quantity[i] > 0 && _ext1155Address[i] != address(0),
+                        "ownershipCheckExt: invalid item quantity or address"
+                    );
+                }
+                uint256 balance = IERC1155Upgradeable(_ext1155Address[i]).balanceOf(address(this), _ext1155Id[i]);
+                if (balance > 0) {
+                    require(
+                        _ext1155Quantity[i] <= balance,
+                        "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
+                    );
+                    counterOwned++;
+                }
+            }
         }
-        if (_extNftsIds.length > 0) {
-            votedIndexExtNfts[votedIndex] = votedExtNfts.length;
-            votedExtNfts.push(_extNftsIds);
-            votedIndexExtAddress[votedIndex] = votedExtAddress.length;
-            votedExtAddress.push(_extNftsAddress);
+        require(
+            counterOwned == _extErc20Value.length + _extNftsId.length + _ext1155Id.length,
+            "ownershipCheckExt: one token or more is not owned by the FrAactionHub"
+        );
         }
-        if (_ext1155Ids.length > 0) {
-            votedIndexExt1155[votedIndex] = votedExt1155.length;
-            votedExt1155.push(_ext1155Ids);
-            votedIndexExt1155Quantity[votedIndex] = votedExt1155Quantity.length;
-            votedExt1155Quantity.push(_ext1155Quantity);
-            votedIndexExt1155Address[votedIndex] = votedExt1155Address.length;
-            votedExt1155Address.push(_ext1155Address);
+        if (_checkParams) {
+            if (_extErc20Value.length > 0) {
+                votedIndexExtErc20Value[votedIndex] = votedExtErc20Value.length;
+                votedExtErc20Value.push(_extErc20Value);
+                votedIndexExtErc20Address[votedIndex] = votedExtErc20Address.length;
+                votedExtErc20Address.push(_extErc20Address);
+            }
+            if (_extNftsId.length > 0) {
+                votedIndexExtNfts[votedIndex] = votedExtNfts.length;
+                votedExtNfts.push(_extNftsId);
+                votedIndexExtAddress[votedIndex] = votedExtAddress.length;
+                votedExtAddress.push(_extNftsAddress);
+            }
+            if (_ext1155Id.length > 0) {
+                votedIndexExt1155[votedIndex] = votedExt1155.length;
+                votedExt1155.push(_ext1155Id);
+                votedIndexExt1155Quantity[votedIndex] = votedExt1155Quantity.length;
+                votedExt1155Quantity.push(_ext1155Quantity);
+                votedIndexExt1155Address[votedIndex] = votedExt1155Address.length;
+                votedExt1155Address.push(_ext1155Address);
+            }
         }
     }
 
@@ -2343,7 +2263,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     }
     
      /// @notice an external function to decrease an Aavegotchi staked collateral amount
-    function VoteForStakeDecrease(uint256 _tokenId, uint256 _stakeAmount) external nonReentrant {
+    function voteForStakeDecrease(uint256 _tokenId, uint256 _stakeAmount) external nonReentrant {
         require(
             balanceOf(msg.sender) > 0, 
             "VoteForStakeDecrease: user not an owner of the FrAactionHub"
@@ -2478,7 +2398,8 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 votesAavegotchi[_tokenId][votedAavegotchi[_tokenId][i]] = 0;
             }
             aavegotchi[_tokenId] = winner;
-            address collateral = DiamondInterface(diamondContract).portalAavegotchiTraits(_tokenId).collateralType;
+            PortalAavegotchiTraitsIO[] memory portalInfo = DiamondInterface(diamondContract).portalAavegotchiTraits(_tokenId);
+            address collateral = portalInfo[_option].collateral;
             DiamondInterface(collateral).approve(diamondContract, MAX_INT);
             emit AppointedAavegotchi(_tokenId, aavegotchi[_tokenId]);
             delete votedAavegotchi[_tokenId];
@@ -2575,7 +2496,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             votesSkill[_tokenId][0] += balanceOf(msg.sender);
             currentSkillVote[msg.sender][_tokenId] = 0;
             skillVoting[_tokenId] = true;
-        } else (skillVoting == true) {
+        } else if (skillVoting == true) {
             for (uint i = 0; i < votedSkill.length; i++) {
                 for (uint j = 0; j < _values.length; j++) {
                     if (votedSkill[i][j] == _values[j]) counter++;
@@ -2764,8 +2685,8 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     /// @param _to the ERC20 token receiver
     /// @param _amount the ERC20 token amount
     function _beforeTokenTransfer(address _from, address _to, uint256 _amount) internal virtual override {
-        require (finalAuctionStatus == FinalAuctionStatus.INACTIVE,
-            "beforeTokenTransfer: cannot transfer because a final auction is live"
+        require (split != 7 && split != 8,
+            "beforeTokenTransfer: cannot transfer because ownership transfer or claimAll ongoing"
         );
         beforeTransferToBalance = balanceOf(_to);
     }
@@ -2775,6 +2696,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     /// @param _to the ERC20 token receiver
     /// @param _amount the ERC20 token amount
     function _afterTokenTransfer(address _from, address _to, uint256 _amount) internal virtual override {
+        uint256 replace;
         if (balanceOf(_from) == 0) {
             for (uint i = 0; i < ownersAddress.length; i++) {
                 if (ownersAddress[i] == _from) {
@@ -2786,7 +2708,6 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 }
             }
         }
-        bool replaced;
         if (beforeTransferToBalance == 0) {
                 ownersAddress.push(_to);
                 numberOfOwners++;

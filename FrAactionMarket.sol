@@ -205,7 +205,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
                 delete buyingNfts[params.tokenId];
             }
         } else (params.category == 2 || params.category == 3 || params.category == 5) {
-            IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity);
+            IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity,);
             if (params.forSale) {
                 sellingItems[params.tokenId] -= params.quantity;
             } else {
