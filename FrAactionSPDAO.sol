@@ -975,33 +975,32 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 target = transferTo[_idToVoteFor];
                 emit TransferActive(target);
             }
-            if (!realmsDemerged || split = 1) {
+            if (!realmsTransferred || split = 1) {
                 transferRealms();
-                if (split == 0) realmsDemerged = true;
-            } else if (!nftsDemerged || split = 2) {
+                if (split == 0) realmsTransferred = true;
+            } else if (!nftsTransferred || split = 2) {
                 transferNfts();
-                if (split == 0) nftsDemerged = true;
-            } else if (!itemsDemerged || split = 3) {
+                if (split == 0) nftsTransferred = true;
+            } else if (!itemsTransferred || split = 3) {
                 transferItems();
-                if (split == 0) itemsDemerged = true;
-            } else if (!extNftsDemerged || split = 4) {
+                if (split == 0) itemsTransferred = true;
+            } else if (!extNftsTransferred || split = 4) {
                 transferExternalNfts();
-                if (split == 0) extNftsDemerged = true;
-            } else if (!ext1155Demerged || split = 5) {
+                if (split == 0) extNftsTransferred = true;
+            } else if (!ext1155Transferred || split = 5) {
                 transferExternal1155();
-                if (split == 0) ext1155Demerged = true;
-            } else if (!extErc20Demerged || split = 6) {
+                if (split == 0) ext1155Transferred = true;
+            } else if (!extErc20Transferred || split = 6) {
                 transferExternalErc20();
-                if (split == 0) extErc20Demerged = true;
+                if (split == 0) extErc20Transferred = true;
             } else {
-                if (inMatic)
                 demergerStatus = DemergerStatus.INACTIVE;
-                realmsDemerged = false;
-                nftsDemerged = false;
-                itemsDemerged = false;
-                extNftsDemerged = false;
-                ext1155Demerged = false;
-                extErc20Demerged = false;
+                realmsTransferred = false;
+                nftsTransferred = false;
+                itemsTransferred = false;
+                extNftsTransferred = false;
+                ext1155Transferred = false;
+                extErc20Transferred = false;
                 DemergerAssetsTransferred(address(this));
             }
             feesContributor[msg.sender]++;
@@ -1074,14 +1073,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     
     function voteForMerger(
         bool proposeMergerTo,
-        address _mergerTarget, 
-        address[] calldata _extErc20Address,
-        address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address,
-        uint256[] calldata _extErc20Value,
-        uint256[] calldata _extNftsId,  
-        uint256[] calldata _ext1155Id,
-        uint256[] calldata _ext1155Quantity
+        address _mergerTarget
     ) external nonReentrant {
         require(
             fundingStatus == FundingStatus.INACTIVE, 
@@ -1154,22 +1146,46 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     transferRealms();
                 } else if (nftsId.length > 0 && split == 0 || split == 2) {
                     transferNfts();
-                } else if (itemsDiamond.length > 0 && split == 0 || 
-                    split == 3 || 
-                    checkTickets == true
-                    ) {
+                } else if (
+                        itemsDiamond.length > 0 && split == 0 || 
+                        split == 3 || 
+                        checkTickets == true
+                    ) 
+                {
                     transferItems();
-                } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
-                    transferExternalNfts(_extNftsAddress, _extNftsId);
-                } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
-                    transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
-                } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
-                    transferExternalErc20(_extErc20Address, _extErc20Value);
+                } else if (!extNftsTransferred || split = 4) {
+                    transferExternalNfts();
+                    if (split == 0) extNftsTransferred = true;
+                } else if (!ext1155Transferred || split = 5) {
+                    transferExternal1155();
+                    if (split == 0) ext1155Transferred = true;
+                } else if (!extErc20Transferred || split = 6) {
+                    transferExternalErc20();
+                    if (split == 0) extErc20Transferred = true; 
                 } else {
-                    if (totalNumberExtAssets != extAssetsTansferred) return;
-                    uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
-                    if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), target, bal);
+                    extNftsTransferred = false;
+                    ext1155Transferred = false;
+                    extErc20Transferred = false;
+                    if (totalTreasuryInGhst > 0) ERC20lib.transferFrom(ghstContract, address(this), target, totalTreasuryInGhst);
                     if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
+                    totalTreasuryInGhst = 0;
+                    totalTreasuryInMatic = 0;
+                    uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
+                    residualGhst = bal - currentBalanceInGhst;
+                    residualMatic = address(this).balance - currentBalanceInMatic;
+                    if (exitInGhst) {
+                        redeemedCollateral[ghstContract].push(residualGhst);
+                        if (collateralToRedeem[ghstContract] == 0) {
+                            collateralToRedeem[ghstContract] = true;
+                            collateralAvailable.push(ghstContract);
+                        }
+                    } else {
+                        redeemedCollateral[thisContract].push(residualMatic);
+                        if (collateralToRedeem[thisContract] == 0) {
+                            collateralToRedeem[thisContract] = true;
+                            collateralAvailable.push(thisContract);
+                        }
+                    }
                     mergerStatus == MergerStatus.ASSETSTRANSFERRED;
                     extAssetsTansferred = 0;
                     totalNumberExtAssets = nonTransferredAssets;
@@ -1250,12 +1266,15 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 splitCounter = 0;
                 multiple = 0;
             }
-            mergerStatus = MergerStatus.MERGED;
+            totalTreasuryInGhst += FraactionInterface(mergerTarget).totalTreasuryInGhst();
+            totalTreasuryInMatic += FraactionInterface(mergerTarget).totalTreasuryInMatic();
+            mergerStatus = MergerStatus.INACTIVE;
             FraactionInterface(mergerTarget).confirmFinalizedMerger();
             emit MergerFinalized(mergerTarget);
         }
         if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
         if (startIndex > ownersFrom.length) return;
+        uint256 tokenSupplyFrom = FraactionInterface(mergerTarget).totalSupply();
         for (uint i = startIndex; i < endIndex; i++) {
             for (uint j = 0; j < ownersAddress.length; j++) {
                 if (ownersFrom[i] == ownersAddress[j]) {
@@ -1265,7 +1284,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             if (existing == false) ownersAddress.push(ownersFrom[i]);
             mint(
                 ownersFrom[i], 
-                newShareFrom * FraactionInterface(mergerTarget).balanceOf(ownersFrom[i]) / FraactionInterface(mergerTarget).totalSupply()
+                newShareFrom * FraactionInterface(mergerTarget).balanceOf(ownersFrom[i]) / tokenSupplyFrom
             );
         }
         feesContributor[msg.sender]++;
@@ -1484,12 +1503,12 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         IERC1155Upgradeable(stakingContract).safeBatchTransferFrom(address(this), target, batchIds, batchQuantities, new bytes(0));
     }
 
-    function transferExternalErc20(address[] memory _extErc20Address, address[] memory _extErc20Value) internal {
+    function transferExternalErc20() internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
             arrayLength = votedExtErc20[votedIndexExtErc20[votedIndex]].length;
         } else {
-            arrayLength = _extErc20Value.length;
+            arrayLength = erc20Tokens.length;
         }
         uint256[] memory erc20Address = new uint256[](arrayLength);
         uint256[] memory erc20Value = new uint256[](arrayLength);
@@ -1497,8 +1516,10 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             erc20Value = votedExtErc20Value[votedIndexExtErc20[votedIndex]];
             erc20Address = votedExtErc20Address[votedIndexExtErc20Address[votedIndex]];
         } else {
-            erc20Value = _extErc20Value;
-            erc20Address = _extErc20Address;
+            for (uint i = 0; i < erc20Tokens.length; i++) {
+                erc20Value = ownedErc20[erc20Tokens[i]];
+            }
+            erc20Address = erc20Tokens;
         }
         uint256 startIndex;
         uint256 endIndex = erc20Value.length;
@@ -1506,15 +1527,13 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             maxExtErc20ArrayLength = ISettings(settingsContract).maxExtErc20ArrayLength();
             if (erc20Value.length > maxExtErc20ArrayLength) {
                 endIndex = maxExtErc20ArrayLength;
-                if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (erc20Value.length % maxExtErc20ArrayLength > 0) {
-                        multiple = erc20Value.length / maxExtErc20ArrayLength + 1;
-                    } else {
-                        multiple = erc20Value.length / maxExtErc20ArrayLength;
-                    }
-                    split = 6;
-                    splitCounter++;
+                if (erc20Value.length % maxExtErc20ArrayLength > 0) {
+                    multiple = erc20Value.length / maxExtErc20ArrayLength + 1;
+                } else {
+                    multiple = erc20Value.length / maxExtErc20ArrayLength;
                 }
+                split = 6;
+                splitCounter++;
             }
         } else {
             if (erc20Value.length % maxExtErc20ArrayLength > 0 && splitCounter == multiple - 1) {
@@ -1538,15 +1557,16 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (startIndex > erc20Value.length) return;
         uint256 assetCounter;
         for (uint i = startIndex; i < endIndex; i++) {
-            if (mergerStatus == MergerStatus.ACTIVE) {
-                require(
-                    ownedErc20[erc20Address[i]] >= erc20Value[i],
-                    "transferExternalErc20: not owned ERC20 token"
-                );
-                assetCounter++;
-            }
             try LibERC20.transferFrom(erc20Address[i], addresse(this), target, erc20Value[i]) {
                 ownedErc20[erc20Address[i]] -= erc20Value[i];
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    for (uint j = 0; j < erc20Tokens.length; j++) {
+                        if (erc20Tokens[j] == erc20Address[i]) {
+                            erc20Tokens[j] = erc20Tokens[erc20Tokens.length - 1];
+                            erc20Tokens.pop();
+                        }
+                    }
+                }
             } catch {
                 nonTransferredAssets++;
                 emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
@@ -1555,12 +1575,12 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter; 
     }
 
-    function transferExternalNfts(address[] memory _extNftsAddress, uint256[] memory _extNftsId) internal {
+    function transferExternalNfts() internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
             arrayLength = votedExtNfts[votedIndexExtNfts[votedIndex].length;
         } else {
-            arrayLength = _extNftsAddress.length;
+            arrayLength = nfts.length;
         }
         uint256[] memory nftsAddress = new uint256[](arrayLength);
         uint256[] memory nftsId = new uint256[](arrayLength);
@@ -1568,8 +1588,10 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             nftsId = votedExtNfts[votedIndexExtNfts[votedIndex]];
             nftsAddress = votedExtNftsAddress[votedIndexExtAddress[votedIndex]];
         } else {
-            nftsId = _extNftsId;
-            nftsAddress = _extNftsAddress;
+            for (uint i = 0; i < nfts.length; i++) {
+                nftsId = nfts[i].id;
+            }
+            nftsAddress = nfts;
         }
         uint256 startIndex;
         uint256 endIndex = nftsId.length;
@@ -1577,15 +1599,13 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             maxExtNftArrayLength = ISettings(settingsContract).maxExtNftArrayLength();
             if (nftsId.length > maxExtNftArrayLength) {
                 endIndex = maxExtNftArrayLength;
-                if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (nftsId.length % maxExtNftArrayLength > 0) {
-                        multiple = nftsId.length / maxExtNftArrayLength + 1;
-                    } else {
-                        multiple = nftsId.length / maxExtNftArrayLength;
-                    }
-                    split = 4;
-                    splitCounter++;
+                if (nftsId.length % maxExtNftArrayLength > 0) {
+                    multiple = nftsId.length / maxExtNftArrayLength + 1;
+                } else {
+                    multiple = nftsId.length / maxExtNftArrayLength;
                 }
+                split = 4;
+                splitCounter++;
             }
         } else {
             if (nftsId.length % maxExtNftArrayLength > 0 && splitCounter == multiple - 1) {
@@ -1609,33 +1629,29 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (startIndex > nftsId.length) return;
         uint256 assetCounter;
         for (uint i = startIndex; i < endIndex; i++) {
-            if (mergerStatus == MergerStatus.ACTIVE) {
-                require(
-                    ownedNfts[nftsAddress[i]][nftsId[i]] == true,
-                    "transferExternalErc20: not owned ERC20 token"
-                );
-                assetCounter++;
-            }
             try IERC721Upgradeable(nftsAddress[i]).safeTransferFrom(address(this), target, nftsId[i]) {
                 delete ownedNfts[nftAddress[i]][nftsId[i]];
+                if (demergerStatus == DemergerStatus.ACTIVE) {
+                    for (uint j = 0; j < nfts.length; j++) {
+                        if (nfts[j] == nftsAddress[i]) {
+                            nfts[j] = nfts[nfts.length - 1];
+                            nfts.pop();
+                        }
+                    }
+                }
             } catch {
                 nonTransferredAssets++;
                 emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
             }
         }
-        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter;
     }
 
-    function transferExternal1155(
-        address[] memory _ext1155Address,
-        uint256[] memory _ext1155Ids, 
-        uint256[] memory _ext1155Quantity
-    ) internal {
+    function transferExternal1155() internal {
         uint256 arrayLength;
         if (demergerStatus == DemergerStatus.ACTIVE) {
             arrayLength = votedExt1155Transfer[votedIndexExt1155[votedIndex]].length;
         } else {
-            arrayLength = _ext1155Ids.length;
+            arrayLength = erc1155Tokens.length;
         } 
         uint256[] memory ids1155 = new uint256[](arrayLength);
         uint256[] memory quantity1155 = new uint256[](arrayLength);
@@ -1645,9 +1661,11 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             quantity1155 = votedExt1155Quantity[votedIndexExt1155Quantity[votedIndex]];
             address1155 = votedExt1155Address[votedIndexExt1155Address[votedIndex]];
         } else {
-            ids1155 = _ext1155Ids;
-            quantity1155 = _ext1155Quantity;
-            address1155 = _ext1155Address;
+            for (uint i = 0; i < erc1155Tokens.length; i++) {
+                ids1155 = erc1155Tokens[i].id;
+                quantity1155 = erc1155Tokens[i].quantity;
+            }
+            address1155 = erc1155Tokens;
         }
         uint256 startIndex;
         uint256 endIndex = ids1155.length;
@@ -1655,15 +1673,13 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             maxExt1155ArrayLength = ISettings(settingsContract).maxExt1155ArrayLength();
             if (ids1155.length > maxExtItemsArrayLength) {
                 endIndex = maxExtItemsArrayLength;
-                if (demergerStatus == DemergerStatus.ACTIVE) {
-                    if (ids1155.length % maxExtItemsArrayLength > 0) {
-                        multiple = ids1155.length / maxExtItemsArrayLength + 1;
-                    } else {
-                        multiple = ids1155.length / maxExtItemsArrayLength;
-                    }
-                    split = 5;
-                    splitCounter++;
+                if (ids1155.length % maxExtItemsArrayLength > 0) {
+                    multiple = ids1155.length / maxExtItemsArrayLength + 1;
+                } else {
+                    multiple = ids1155.length / maxExtItemsArrayLength;
                 }
+                split = 5;
+                splitCounter++;
             } 
         } else {
             if (ids1155.length % maxExtItemsArrayLength > 0 && splitCounter == multiple - 1) {
@@ -1687,60 +1703,59 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (startIndex > ids1155.length) return;
         uint256 assetCounter;
         for (uint i = startIndex; i < endIndex; i++) {
-            if (mergerStatus == MergerStatus.ACTIVE) {
-                    require(
-                    ownedErc1155[address1155[i]][ids1155[i]] == quantity1155[i],
-                    "transferExternal1155: NFT token address cannot be null"
-                );
-            }
-            if (i == startIndex) {
-                uint256 redundancyCounter;
-                uint256[] memory indexRedundancy = new indexRedundancy[](endIndex - startIndex + 1);
-                for (uint j = i + 1; j < endIndex; j++) {
-                    if (address1155[i] == address1155[j]) {
-                        if (mergerStatus == MergerStatus.ACTIVE) {
-                            require(
-                                ownedErc1155[address1155[j]][ids1155[j]] == quantity1155[j],
-                                "transferExternal1155: NFT token address cannot be null"
-                            );
-                        }
-                        ownedErc1155[address1155[j]][ids1155[j]] -= quantity1155[j];
-                        indexRedundancy[redundancyCounter] = j;
-                        assetCounter++;
-                        redundancyCounter++;
-                    }
-                    if (redundancyCounter > 0) {
-                        uint256 indexCounter;
-                        uint256[] memory batchIds = new uint256[](redundancyCounter);
-                        uint256[] memory batchQuantity = new uint256[](redundancyCounter);
-                        for (uint k = startIndex; k < endIndex; k++) {
-                            if (k == indexRedundancy[indexCounter]) {
-                                batchIds[indexCounter] = ids1155[k];
-                                batchQuantity[indexCounter] = quantity1155[k];
-                                indexRedundancy[indexCounter] = 0;
-                                indexCounter++;
+            if (address1155[i] == address(0)) continue;
+            uint256 redundancyCounter;
+            redundancyCounter++;
+            uint256[] memory indexRedundancy = new indexRedundancy[](endIndex - startIndex + 1);
+            for (uint j = i + 1; j < endIndex; j++) {
+                if (address1155[j] == address(0)) continue;
+                if (address1155[i] == address1155[j]) {
+                    ownedErc1155[address1155[j]][ids1155[j]] -= quantity1155[j];
+                    if (demergerStatus == DemergerStatus.ACTIVE) {
+                        for (uint k = 0; k < erc1155Tokens.length; k++) {
+                            if (erc1155Tokens[k].address == address1155[j]) {
+                                erc1155Tokens[k] = erc1155Tokens[erc1155Tokens.length - 1];
+                                erc1155Tokens.pop();
                             }
                         }
-                        try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
-                            ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
-                        } catch {
-                            nonTransferredAssets++;
-                            emit NonTransferredErc1155(address1155[i], ids1155[i], quantity1155[i]);
+                    }
+                    indexRedundancy[redundancyCounter] = j;
+                    delete address1155[j];
+                    redundancyCounter++;
+                }
+                uint256 indexCounter;
+                uint256[] memory batchIds = new uint256[](redundancyCounter);
+                uint256[] memory batchQuantity = new uint256[](redundancyCounter);
+                batchIds[indexCounter] = ids1155[i];
+                batchQuantity[indexCounter] = quantity1155[i];
+                indexCounter++;
+                for (uint k = i + 1; k < endIndex; k++) {
+                    for (uint l = 0; l < indexRedundancy.length; l++) {
+                        if (k == indexRedundancy[l]) {
+                            batchIds[indexCounter] = ids1155[k];
+                            batchQuantity[indexCounter] = quantity1155[k];
+                            indexRedundancy[l] = 0;
+                            indexCounter++;
                         }
                     }
-                    redundancyCounter = 0;
                 }
-            } else {
-                try IERC1155Upgradeable(address1155[i]).safeTransferFrom(address(this), target, ids1155[i], quantity1155[i], new bytes(0)) {
-                ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
+                try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
+                    ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
+                    if (demergerStatus == DemergerStatus.ACTIVE) {
+                        for (uint k = 0; k < erc1155Tokens.length; k++) {
+                            if (erc1155Tokens[k].address == address1155[i]) {
+                                erc1155Tokens[k] = erc1155Tokens[erc1155Tokens.length - 1];
+                                erc1155Tokens.pop();
+                            }
+                        }
+                    }
                 } catch {
-                    nonTransferredAssets++;
-                    emit NonTransferredErc1155(address1155[i], ids1155[i], quantity1155[i]);
+                    nonTransferredAssets += redundancyCounter;
+                    emit NonTransferredErc1155(address1155[i], batchIds, batchQuantity);
                 }
-                assetCounter++;
+                redundancyCounter = 0;
             }
         }  
-        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter; 
     }
                             
     function voteForDemerger(
@@ -1761,7 +1776,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         string calldata _symbol
     ) external nonReentrant {
         require(
-            fundingStatus == FundingStatus.FRACTIONALIZED, 
+            fundingStatus == FundingStatus.INACTIVE, 
             "voteForDemerger: FrAactionHub not fractionalized yet"
         );
         require(
@@ -1903,33 +1918,33 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             demergerStatus == DemergerStatus.ACTIVE,
             "demergeTo: demerger not active"
         );
-        if (!realmsDemerged || split = 1) {
+        if (!realmsTransferred || split = 1) {
             transferRealms();
-            if (split == 0) realmsDemerged = true;
-        } else if (!nftsDemerged || split = 2) {
+            if (split == 0) realmsTransferred = true;
+        } else if (!nftsTransferred || split = 2) {
             transferNfts();
-            if (split == 0) nftsDemerged = true;
-        } else if (!itemsDemerged || split = 3) {
+            if (split == 0) nftsTransferred = true;
+        } else if (!itemsTransferred || split = 3) {
             transferItems();
-            if (split == 0) itemsDemerged = true;
-        } else if (!extNftsDemerged || split = 4) {
+            if (split == 0) itemsTransferred = true;
+        } else if (!extNftsTransferred || split = 4) {
             transferExternalNfts();
-            if (split == 0) extNftsDemerged = true;
-        } else if (!ext1155Demerged || split = 5) {
+            if (split == 0) extNftsTransferred = true;
+        } else if (!ext1155Transferred || split = 5) {
             transferExternal1155();
-            if (split == 0) ext1155Demerged = true;
-        } else if (!extErc20Demerged || split = 6) {
+            if (split == 0) ext1155Transferred = true;
+        } else if (!extErc20Transferred || split = 6) {
             transferExternalErc20();
-            if (split == 0) extErc20Demerged = true;
+            if (split == 0) extErc20Transferred = true;
         } else {
             demergerStatus = DemergerStatus.INACTIVE;
             FraactionInterface(target).confirmDemerger();
-            realmsDemerged = false;
-            nftsDemerged = false;
-            itemsDemerged = false;
-            extNftsDemerged = false;
-            ext1155Demerged = false;
-            extErc20Demerged = false;
+            realmsTransferred = false;
+            nftsTransferred = false;
+            itemsTransferred = false;
+            extNftsTransferred = false;
+            ext1155Transferred = false;
+            extErc20Transferred = false;
             DemergerAssetsTransferred(address(this));
         }
         feesContributor[msg.sender]++;
@@ -2015,7 +2030,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         uint256[] memory _itemsId, 
         uint256[] memory _itemsQuantity,
         uint256[7] memory _ticketsQuantity,
-        bool _checkParams
+        bool _saveParams
     ) internal {
         uint256 counterOwned;
         if (_nftsId.length > 0) {
@@ -2043,12 +2058,10 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (_itemsId.length > 0) {
             ItemIdIO[] memory balance = DiamondInterface(diamondContract).itemBalances(address(this));
             for (uint i = 0; i < _itemsId.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _itemsId[i] > 0 && _itemsQuantity[i] > 0,
-                        "ownershipCheck: invalid item quantity"
-                    );
-                }
+                require(
+                    _itemsQuantity[i] > 0,
+                    "ownershipCheck: invalid item quantity"
+                );
                 for (uint j = 0; j < balance.length; j++) {
                     if (_itemsId[i] == balance[j].itemId) {
                         require(
@@ -2065,9 +2078,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             bool check;
             uint256[] memory ticketsCurrentQuantity = DiamondInterface(stakingContract).balanceOfAll(address(this));
             for (uint i = 0; i < _ticketsQuantity.length; i++) {
-                if (_checkParams) {
-                    if (_ticketsQuantity[i] == 0) check = true;
-                }
+                if (_ticketsQuantity[i] == 0) check = true;
                 require(
                     _ticketsQuantity[i] <= ticketsCurrentQuantity[i],
                     "ownershipCheck: proposed tickets quantities have to be equal or inferior to the owned tickets quantities"
@@ -2083,7 +2094,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             counterOwned == _nftsId.length + _realmsId.length + _itemsId.length + _ticketsQuantity.length,
             "ownershipCheck: one token or more is not owned by the FrAactionHub"
         );
-        if (_checkParams) {
+        if (_saveParams) {
             if (_nftsId.length > 0) {
                 votedIndexNfts[votedIndex] = votedNfts.length;
                 votedNfts.push(_nftsId);
@@ -2113,54 +2124,42 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         address[] memory _extErc20Address,
         address[] memory _extNftsAddress,
         address[] memory _ext1155Address,
-        bool _checkParams
+        bool _saveParams
     ) internal {
         uint256 counterOwned;
         if (_extNftsId.length > 0) {
             for (uint i = 0; i < _extNftsId.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _extNftsAddress[i] != address(0),
-                        "ownershipCheckExt: invalid NFT address"
-                    );
-                }
-                if (IERC721Upgradeable(_extNftsAddress[i]).ownerOf(_extNftsId[i]) == address(this)) counterOwned++;
+                require(
+                    _extNftsAddress[i] != address(0),
+                    "ownershipCheckExt: invalid NFT address"
+                );
+                if (ownedNfts[_extNftsAddress[i]][_extNftsId[i]] == true) counterOwned++;
             }
         }
         if (_extErc20Value.length > 0) {
             for (uint i = 0; i < _extErc20Value.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _extErc20Value[i] > 0 && _extErc20Address[i] != address(0),
-                        "ownershipCheckExt: invalid item quantity or address"
-                    );
-                }
-                uint256 balance = IERC20Upgradeable(_extErc20Address[i]).balanceOf(address(this));
-                if (balance > 0) {
-                    require(
-                        _extErc20Value[i] <= balance,
-                        "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
-                    );
-                    counterOwned++;
-                }
+                require(
+                    _extErc20Value[i] > 0 && _extErc20Address[i] != address(0),
+                    "ownershipCheckExt: invalid item quantity or address"
+                );
+                require(
+                    ownedErc20[_extErc20Address[i]] <= _extErc20Value[i],
+                    "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
+                );
+                counterOwned++;
             }
         }
         if (_ext1155Id.length > 0) {
             for (uint i = 0; i < _ext1155Id.length; i++) {
-                if (_checkParams) {
-                    require(
-                        _ext1155Quantity[i] > 0 && _ext1155Address[i] != address(0),
-                        "ownershipCheckExt: invalid item quantity or address"
-                    );
-                }
-                uint256 balance = IERC1155Upgradeable(_ext1155Address[i]).balanceOf(address(this), _ext1155Id[i]);
-                if (balance > 0) {
-                    require(
-                        _ext1155Quantity[i] <= balance,
-                        "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
-                    );
-                    counterOwned++;
-                }
+                require(
+                    _ext1155Quantity[i] > 0 && _ext1155Address[i] != address(0),
+                    "ownershipCheckExt: invalid item quantity or address"
+                );
+                require(
+                    ownedErc1155[_ext1155Address[i]][_ext1155Id[i]] <= _ext1155Quantity[i],
+                    "ownershipCheckExt: proposed item quantities have to be equal or inferior to the owned items quantities"
+                );
+                counterOwned++;
             }
         }
         require(
@@ -2168,7 +2167,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "ownershipCheckExt: one token or more is not owned by the FrAactionHub"
         );
         }
-        if (_checkParams) {
+        if (_saveParams) {
             if (_extErc20Value.length > 0) {
                 votedIndexExtErc20Value[votedIndex] = votedExtErc20Value.length;
                 votedExtErc20Value.push(_extErc20Value);
@@ -2703,14 +2702,12 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     replace = ownersAddress[ownersAddress.length - 1];
                     ownersAddress[i] = replace;
                     ownersAddress.pop();
-                    numberOfOwners--;
                     break;
                 }
             }
         }
         if (beforeTransferToBalance == 0) {
                 ownersAddress.push(_to);
-                numberOfOwners++;
         }
         if (_from != address(0)) {
             uint256 fromPrice = userPrices[_from];

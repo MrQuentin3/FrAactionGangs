@@ -228,6 +228,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         rafflesContract = 0x6c723cac1E35FE29a175b287AE242d424c52c1CE;
         marketContract = ;
         settingsContract = ;
+        quickSwapRouterContract = 0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff;
         wrappedMaticContract = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
         DiamondInterface(diamondContract).setApprovalForAll(diamondContract, true);
         DiamondInterface(stakingContract).setApprovalForAll(rafflesContract, true);
@@ -253,7 +254,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         if (_tokenAddress == ghstContract) {
             ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
             totalTreasuryInGhst += _value;
-        } else if (_tokenAddress == address(0) && msg.value > 0) {
+        } else if (_tokenAddress == address(this) && msg.value > 0) {
             totalTreasuryInMatic += msg.value;
         } else {
             ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
@@ -298,22 +299,36 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         emit DonatedExtErc1155(_tokenAddress, _id, _value);
     }
 
-    function acknowledgeExtErc20(address _tokenAddress, uint256 _value) external {
-        require(
-            _tokenAddress != ghstAddress,
-            "acknowledgeExtErc20: GHST tokens are natively acknowledged by the FrAactionHub"
-        );
+    function acknowledgeFungibleTokens(address _tokenAddress) external {
         uint256 balance = IERC721Upgradeable(_tokenAddress).balanceOf(address(this));
-        require(
-            balance >= _value + ownedErc20[_tokenAddress],
-            "acknowledgeExtErc20: insufficient token balance"
-        );
-        if (!ownedErc20[_tokenAddress]) {
-            totalNumberExtAssets++;
-            erc20Tokens.push(_tokenAddress);
+        uint256 value;
+        if (_tokenAddress == ghstContract) {
+            require(
+                balance >= currentBalanceInGhst,
+                "acknowledgeFungibleTokens: insufficient GHST balance"
+            );
+            value = balance - currentBalanceInGhst;
+            totalTreasuryInGhst += value;
+        } else if (_tokenAddress == address(this) && msg.value > 0) {
+            require(
+                address(this).balance >= currentBalanceInMatic,
+                "acknowledgeFungibleTokens: insufficient MATIC balance"
+            );
+            value = balance - currentBalanceInMatic;
+            totalTreasuryInMatic += value;
+        } else {
+            require(
+                balance >= ownedErc20[_tokenAddress],
+                "acknowledgeFungibleTokens: insufficient ERC20 token balance"
+            );
+            if (!ownedErc20[_tokenAddress]) {
+                totalNumberExtAssets++;
+                erc20Tokens.push(_tokenAddress);
+            }
+            value = balance - ownedErc20[_tokenAddress]
+            ownedErc20[_tokenAddress] += value;
         }
-        ownedErc20[_tokenAddress] += value;
-        emit AcknwoledgedExtErc20(_tokenAddress, _value);
+        emit AcknwoledgedExtErc20(_tokenAddress, value);
     }
 
     function acknowledgeExtNft(address _tokenAddress, uint256 _id) external {
@@ -471,6 +486,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 ERC20lib.transferFrom(ghstContract, _contributor, address(this), _value);
                 ownerTotalContributedInGhst[_contributor] += _value;
                 totalContributedToFraactionHubInGhst += _value;
+                currentBalanceInGhst += _value;
                 totalTreasuryInGhst += _value;
                 totalContributedToFunding += _value;
                 if (firstRound == true) {
@@ -494,6 +510,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 );
                 ownerTotalContributedInMatic[_contributor] += msg.value;
                 totalContributedToFraactionHubInMatic += msg.value;
+                currentBalanceInMatic += msg.value;
                 totalTreasuryInMatic += msg.value;
                 totalContributedToFunding += msg.value;
                 if (firstRound == true) {
@@ -682,12 +699,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             }
         }
         if (fundingInGhst[fundingNumber]) {
-            ownerTotalContributedInGhst[msg.sender] += _value;
-            totalContributedToFraactionHubInGhst += _value;
-            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), _value);
+            ownerTotalContributedInGhst[msg.sender] += value;
+            currentBalanceInGhst += value;
+            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
         } else {
-            ownerTotalContributedInMatic[msg.sender] += msg.value;
-            totalContributedToFraactionHubInMatic += msg.value;
+            ownerTotalContributedInMatic[msg.sender] += value;
+            currentBalanceInMatic += value;
         }
         ownerContributedToFunding[msg.sender][fundingNumber] += value;
         totalContributedToFunding += value;
@@ -816,8 +833,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             fee = _getFundingFee(totalContributedToFunding);
             if (fundingInGhst[fundingNumber]) {
                 ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
+                totalContributedToFraactionHubInGhst += totalContributedToFunding;
             } else {
                 transferMaticOrWmatic(fraactionDaoMultisig, fee);
+                totalContributedToFraactionHubInMatic += totalContributedToFunding;
             }
             if (firstRound == true) {
                 // mint fractional ERC-20 tokens
@@ -868,7 +887,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         }
         require(
             balanceOf(_contributor) > 0, 
-            "finalClaim: no tokens to cash out"
+            "claim: no tokens to cash out"
         );
         // calculate the amount of fractional NFT tokens owed to the user
         // based on how much GHST they contributed towards the new funding,
@@ -888,7 +907,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             }
             for (uint i = 0; i < contributions; i++) {
                 (uint256 tokenAmount, uint256 collateralAmount, address collateralAddress) = 
-                    _portalCalculateTokensAndGhstOwed(
+                    portalCalculateTokensAndGhstOwed(
                         _contributor, 
                         portalFundingResult[portalFundingContributor[_contributor][i]], 
                         portalFundingContributor[_contributor][i]
@@ -898,7 +917,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     sumToken += tokenAmount;
                 }
                 if (collateralAmount > 0) {
-                    if (collateralAmount > IERC20Upgradeable(collateralAddress).balanceOf(address(this))) collateralAmount = IERC20Upgradeable(collateralAddress).balanceOf(address(this));
+                    uint256 bal = IERC20Upgradeable(collateralAddress).balanceOf(address(this));
+                    if (collateralAmount > bal) collateralAmount = bal;
                     ERC20lib.transfer(collateralAddress, _contributor, collateralAmount);
                 }
             }
@@ -917,23 +937,21 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 fundingLength = fundingContributor[_contributor].length;
             }
             for (uint i = 0; i < fundingLength; i++) {
-                (uint256 tokenAmount, uint256 ghstAmount, uint256 maticAmount) = 
-                    _calculateTokensAndGhstOwed(
+                (uint256 tokenAmount, uint256 ghstorMaticAmount) = 
+                    calculateTokensOwed(
                         _contributor, 
                         fundingResult[fundingContributor[_contributor][i]], 
                         fundingContributor[_contributor][i]
                     );
                 // transfer tokens to contributor for their portion of GHST used
-                if (tokenAmount > 0) {
-                    sumToken += tokenAmount;
-                }
-                // if the new funding deadline is reached or the repurchase failed then return all the GHST to the contributor
-                if (ghstAmount > 0) {
-                    sumGhst += ghstAmount;
-                }
-                // if the new funding deadline is reached or the repurchase failed then return all the MATIC to the contributor
-                if (maticAmount > 0) {
-                    sumMatic += maticAmount;
+                sumToken += tokenAmount;
+                // if the new funding deadline is reached or the repurchase failed then return all the GHST or MATIC to the contributor
+                if (ghstorMaticAmount > 0) {
+                    if (fundingInGhst[fundingContributor[_contributor][i]]) {
+                        sumGhst += ghstAmount;
+                    } else {
+                        sumMatic += maticAmount;
+                    }
                 }
             }
             delete fundingContributor[_contributor];
@@ -943,7 +961,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         }
         if (sumToken > 0) _transferTokens(_contributor, sumToken);
         if (sumGhst > 0) {
-            if (sumGhst > IERC20Upgradeable(ghstContract).balanceOf(address(this))) sumGhst = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            uint256 bal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            if (sumGhst > ) sumGhst = bal;
             ERC20lib.transfer(ghstContract, _contributor, sumGhst);
         }
         uint256 sum;
@@ -955,8 +974,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 if (collateralAvailable[i] == thisContract) {
                     sumMatic += sum * balanceOf(_contributor) / totalSupply();
                 } else {
+                    uint256 bal = IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this))
                     uint256 refundedCollateral = sum * balanceOf(_contributor) / totalSupply();
-                    if (refundedCollateral > IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this))) refundedCollateral = IERC20Upgradeable(collateralAvailable[i]).balanceOf(address(this));
+                    if (refundedCollateral > bal) refundedCollateral = bal;
                     ERC20lib.transfer(collateralAvailable[i], _contributor, refundedCollateral);
                 }
                 emit CollateralRefunded(_contributor, collateralAvailable[i], refundedCollateral);
@@ -974,36 +994,37 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             sumGhst,
             sumMatic
         );
-        if (finalAuctionStatus == FinalAuctionStatus.BURNING) {
-            claimedCounter++;
-            if (claimedCounter == numberOfOwners) {
-                finalAuctionStatus = FinalAuctionStatus.INACTIVE;
-                claimedCounter = 0;
-            }
-            burn(_contributor, balanceOf(msg.sender));
-        }
         if (finalAuctionStatus == FinalAuctionStatus.ENDED) {
             claimedCounter++;
-            if (claimedCounter == numberOfOwners) {
-                balGhst = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-                balMatic = address(this).balance;
-                if (balGhst > 0) {
-                    redeemedCollateral[ghstContract].push(balGhst);
-                    if (collateralToRedeem[ghstContract] == 0) {
-                        collateralToRedeem[ghstContract] = true;
-                        collateralAvailable.push(ghstContract);
-                    } 
-                }
-                if (balMatic > 0) {
-                    redeemedCollateral[thisContract].push(balMatic);
-                    if (collateralToRedeem[thisContract] == 0) {
-                        collateralToRedeem[thisContract] = true;
-                        collateralAvailable.push(thisContract);
-                    }
-                }
+            burn(_contributor, balanceOf(_contributor));
+            if (claimedCounter == ownersAddress.length) {
                 claimedCounter = 0;
-                finalAuctionStatus = FinalAuctionStatus.BURNING;
+                if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
+                    finalAuctionStatus = FinalAuctionStatus.DELETINGTOKENS;
+                else {
+                    delete erc20Tokens;
+                    delete nfts;
+                    delete erc1155Tokens;
+                    finalAuctionStatus = FinalAuctionStatus.INACTIVE;
+                }
+                firstRound = true;
             }
+        }
+    }
+
+    function deleteTokens() external {
+        require(
+            finalAuctionStatus == FinalAuctionStatus.DELETINGTOKENS, 
+            "deleteTokens: no tokens to cash out"
+        );
+        if (erc20Tokens.length > 0) {
+            delete erc20Tokens;
+        } else if (nfts.length > 0) {
+            delete nfts;
+        } else if (erc1155Tokens.length > 0) {
+            delete erc1155Tokens;
+        } else {
+            finalAuctionStatus = FinalAuctionStatus.INACTIVE;
         }
     }
 
@@ -1130,24 +1151,24 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             value > 0, 
             "contributePurchase: must contribute more than 0"
         );
+        contributions[_contributor].push(_contribution);
+        if (ownerContributedToFunding[msg.sender][fundingNumber] = 0) fundingContributor[_contributor].push(fundingNumber);
+        if (fundingInGhst[fundingNumber]) {
+            ownerTotalContributedInGhst[msg.sender] += value;
+            currentBalanceInGhst += value;
+            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+        } else {
+            ownerTotalContributedInMatic[msg.sender] += value;
+            currentBalanceInMatic += value;
+        }
+        ownerContributedToFunding[msg.sender][fundingNumber] += value;
+        totalContributedToFunding += value;
         // add contribution to contributor's array of contributions
         Contribution memory _contribution =
             Contribution({
                 amount: value,
                 previousTotalContributedToFraactionHub: totalContributedToFunding
             });
-        contributions[_contributor].push(_contribution);
-        if (ownerContributedToFunding[msg.sender][fundingNumber] = 0) fundingContributor[_contributor].push(fundingNumber);
-        if (fundingInGhst[fundingNumber]) {
-            ownerTotalContributedInGhst[msg.sender] += value;
-            totalContributedToFraactionHubInGhst += value;
-            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
-        } else {
-            ownerTotalContributedInMatic[msg.sender] += value;
-            totalContributedToFraactionHubInMatic += value;
-        }
-        ownerContributedToFunding[msg.sender][fundingNumber] += value;
-        totalContributedToFunding += value;
         emit ContributedAuction(
             _contributor,
             value,
@@ -1208,12 +1229,15 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         // if the purchase was completed,
         if (fundingStatus == FundingStatus.COMPLETED) {
             // transfer the fee to FrAactionDAO
+            submittedAmount[fundingNumber] = totalContributedToFunding;
             fee = getFundingFee(submittedBid);
             fundingResult[fundingNumber] = 1;
             if (fundingInGhst[fundingNumber]) {
                 ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
+                totalContributedToFraactionHubInGhst += totalContributedToFunding;
             } else {
                 transferMaticOrWmatic(fraactionDaoMultisig, fee);
+                totalContributedToFraactionHubInMatic += totalContributedToFunding;
             }
             if (firstRound == true) {
                 // mint fractional ERC-20 tokens
@@ -1304,7 +1328,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         ownerContributedToPortalFunding[msg.sender][portalFundingNumber] += convertedCollateralToGhst;
         totalContributedToPortalFunding += convertedCollateralToGhst;
         ownerTotalContributedInGhst[msg.sender] += convertedCollateralToGhst;
-        totalContributedToFraactionHubInGhst += convertedCollateralToGhst;
+        currentBalanceInGhst += convertedCollateralToGhst;
         portalFundingContributor[msg.sender].push(portalFundingNumber);
         emit ContributedPortalFunding(
             msg.sender,
@@ -1367,6 +1391,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             ERC20lib.transfer(collateralType, fraactionDaoMultisig, _fee);
             mint(address(this), valueToTokens(totalContributedToPortalFunding));
             portalFundingResult[portalFundingNumber] = 1;
+            totalContributedToFraactionHubInGhst += totalContributedToPortalFunding;
         } else {
             portalFundingResult[portalFundingNumber] = 0;
         }
@@ -1409,7 +1434,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             votingTokens * 1000 >= ISettings(settingsContract).minVotePercentage() * totalSupply(), 
             "startFinalAuction: not enough voters"
         );
-        if (exitInGhst) ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+        if (exitInGhst) {
+            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
+            currentBalanceInGhst += value;
+        } else {
+            currentBalanceInMatic += value;
+        }
         auctionEnd = block.timestamp + ISettings(settingsContract).auctionLength();
         finalAuctionStatus = FinalAuctionStatus.ACTIVE;
         livePrice = value;
@@ -1440,8 +1470,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         if (exitInGhst) {
             ERC20lib.transferFrom(ghstContract, msg.sender, address(this), value);
             ERC20lib.transferFrom(ghstContract, address(this), winning, livePrice);
+            currentBalanceInGhst += value - livePrice;
         } else {
             transferMaticOrWmatic(winning, livePrice);
+            currentBalanceInMatic += value - livePrice;
         }
         FraactionInterface(winning).notifyOverbid(livePrice);
         // If bid is within 15 minutes of auction end, extend auction
@@ -1508,19 +1540,23 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             transferExternalErc20(_extErc20Address, _extErc20Value);
         } else {
             if (totalNumberExtAssets != extAssetsTansferred) return;
-            uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
-            if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), target, bal);
+            if (totalTreasuryInGhst > 0) ERC20lib.transferFrom(ghstContract, address(this), target, totalTreasuryInGhst);
             if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
+            totalTreasuryInGhst = 0;
+            totalTreasuryInMatic = 0;
             mergerStatus = MergerStatus.INACTIVE;
             finalAuctionStatus = FinalAuctionStatus.ENDED;
+            uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
+            residualGhst = bal - currentBalanceInGhst;
+            residualMatic = address(this).balance - currentBalanceInMatic;
             if (exitInGhst) {
-                redeemedCollateral[ghstContract].push(livePrice);
+                redeemedCollateral[ghstContract].push(livePrice + residualGhst);
                 if (collateralToRedeem[ghstContract] == 0) {
                     collateralToRedeem[ghstContract] = true;
                     collateralAvailable.push(ghstContract);
                 }
             } else {
-                redeemedCollateral[thisContract].push(livePrice);
+                redeemedCollateral[thisContract].push(livePrice + residualMatic);
                 if (collateralToRedeem[thisContract] == 0) {
                     collateralToRedeem[thisContract] = true;
                     collateralAvailable.push(thisContract);
@@ -1546,15 +1582,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     // ======== External: final functions =========
     
     /// @notice an external function to burn all the FrAactionSPDAO ERC20 tokens to receive the ERC721 and (if any) ERC1155/ERC20 tokens
-    function redeem(
-        address[] calldata _extErc20Address,
-        address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address,
-        uint256[] calldata _extErc20Value,
-        uint256[] calldata _extNftsId,  
-        uint256[] calldata _ext1155Id,
-        uint256[] calldata _ext1155Quantity
-    ) external nonReentrant {
+    function redeem() external nonReentrant {
         require(
             finalAuctionStatus == FinalAuctionStatus.INACTIVE, 
             "redeem: no auction starts"
@@ -1600,18 +1628,26 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             transferRealms();
         } else if (nftsId.length > 0 && split == 0 || split == 2) {
             transferNfts();
-        } else if (itemsDiamond.length > 0 && split == 0 || 
+        } else if (
+            itemsDiamond.length > 0 && split == 0 || 
             split == 3 || 
             checkTickets == true
-            ) {
+            ) 
+        {
             transferItems();
-        } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
-            transferExternalNfts(_extNftsAddress, _extNftsId);
-        } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
-            transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
-        } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
-            transferExternalErc20(_extErc20Address, _extErc20Value);
+        } else if (!extNftsTransferred || split = 4) {
+            transferExternalNfts();
+            if (split == 0) extNftsTransferred = true;
+        } else if (!ext1155Transferred || split = 5) {
+            transferExternal1155();
+            if (split == 0) ext1155Transferred = true;
+        } else if (!extErc20Transferred || split = 6) {
+            transferExternalErc20();
+            if (split == 0) extErc20Transferred = true; 
         } else {
+            extNftsTransferred = false;
+            ext1155Transferred = false;
+            extErc20Transferred = false;
             if (totalNumberExtAssets != extAssetsTansferred) return;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
             if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), msg.sender, bal);
@@ -1643,7 +1679,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 stakeToGhst = ISettings(settingsContract).collateralTypeToGhst(collateral);
         uint256 convertedCollateralToGhst = _stakeAmount * (stakeToGhst / 10**8);
         ownerTotalContributed[stakingContributor] += convertedCollateralToGhst;
-        totalContributedToFraactionHub += convertedCollateralToGhst;
+        totalContributedToFraactionHubInGhst += convertedCollateralToGhst;
         ERC20lib.transferFrom(collateral, stakingContributor, address(this), _stakeAmount);
         mint(stakingContributor, valueToTokens(convertedCollateralToGhst));
         emit ContributedStaking(stakingContributor, _tokenId, _stakeAmount);
@@ -1700,6 +1736,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 )
             )
         );
+        currentBalanceInGhst += _ghstAmount;
         redeemedCollateral[ghstContract].push(_ghstAmount);
         if (collateralToRedeem[ghstContract] == 0) {
             collateralToRedeem[ghstContract] = true;
@@ -1804,13 +1841,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     /**
      * @notice Calculate the amount of fractional NFT tokens owed to the contributor
-     * based on how much GHST they contributed towards the funding round
+     * based on how much GHST or MATIC they contributed towards the funding round
      * @param _contributor the address of the contributor
      * @return _tokenAmount the amount of fractional NFT tokens owed to the contributor
-     * @return _GhstAmount the amount of GHST owed to the contributor
+     * @return _GhstAmount the amount of GHST or MATIC owed to the contributor
      */
     function calculateTokensOwed(
-        bool _inGhst,
         address _contributor, 
         bool _successFunding, 
         uint256 _fundingNumber
@@ -1823,25 +1859,30 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         if (contribution > 0) {
             if (_successFunding == true) {
                 if (isBid(_fundingNumber)) {
-                    uint256 _totalUsedForBid = _totalGhstUsedForBid(_contributor);
+                    uint256 _totalUsedForBid = _totalGhstOrMaticUsedForBid(_contributor, _fundingNumber);
                     if (_totalUsedForBid > 0) {
                         _tokenAmount = valueToTokens(_totalUsedForBid);
                     }
-                    // the rest of the contributor's GHST should be returned
-                    _ghstAmount = contribution - _totalUsedForBid;
+                    // the rest of the contributor's GHST or MATIC should be returned
+                    _ghstOrMaticAmount = contribution - _totalUsedForBid;
                 } else {
                     _tokenAmount = valueToTokens(contribution);
                 }
                 if (newOwner[_contributor] == true) {
-                        numberOfOwners++;
-                        newOwner[_contributor] = false;
+                    ownersAddress.push(_contributor);
+                    newOwner[_contributor] = false;
                 }
             } else {
-                // if the new funding was not completed before the deadline of 7 days from the contract deployement or the new funding failed, no GHST was spent;
-                // all of the contributor's GHST for this last new funding round should be returned
-                _ghstAmount = contribution;
-                ownerTotalContributed[_contributor] -= _ghstAmount;
-                totalContributedToFraactionHubInGhstInGhst -= _ghstAmount;
+                // if the new funding was not completed before the deadline of 7 days from the contract deployement or the new funding failed, no GHST or MATIC was spent;
+                // all of the contributor's GHST or MATIC for this last new funding round should be returned
+                _ghstOrMaticAmount = contribution;
+                if (fundingInGhst[_fundingNumber]) {
+                    ownerTotalContributedInGhst[_contributor] -= _ghstOrMaticAmount;
+                    currentBalanceInGhst -= _ghstOrMaticAmount;
+                } else {
+                    ownerTotalContributedInMatic[_contributor] -= _ghstOrMaticAmount;
+                    currentBalanceInMatic -= _ghstOrMaticAmount;
+                }
             }
         }
     }
@@ -1870,7 +1911,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 _collateralAmount = ownerContributedCollateral[_contributor][_portalFundingNumber];
                 _collateralType = ownerCollateralType[_contributor][_portalFundingNumber];
                 ownerTotalContributedInGhst[_contributor] -= contribution;
-                totalContributedToFraactionHubInGhst -= contribution;
+                currentBalanceInGhst -= contribution;
             }
         }
     }
@@ -1882,7 +1923,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @return _total the sum of the contributor's funds that were
      * used towards the winning auction bid
      */
-    function totalGhstUsedForBid(address _contributor)
+    function totalGhstOrMaticUsedForBid(address _contributor, _fundingNumber)
         internal
         view
         returns (uint256 _total)
@@ -1891,7 +1932,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         Contribution[] memory _contributions = contributions[_contributor];
         for (uint256 i = 0; i < _contributions.length; i++) {
             // calculate how much was used from this individual contribution
-            uint256 _amount = _ghstUsedForBid(_contributions[i]);
+            uint256 _amount = ghstOrMaticUsedForBid(_contributions[i], _fundingNumber);
             // if we reach a contribution that was not used,
             // no subsequent contributions will have been used either,
             // so we can stop calculating to save some gas
@@ -1907,20 +1948,18 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      * @return the amount of funds from this contribution
      * that were used towards the winning auction bid
      */
-    function ghstUsedForBid(Contribution memory _contribution)
+    function ghstOrMaticUsedForBid(Contribution memory _contribution, uint256 _fundingNumber)
         internal
         view
         returns (uint256)
     {
-        // load total amount spent once from storage
-        uint256 _totalSpent = submittedBid;
         if (
-            _contribution.previousTotalContributedToFraactionHub + _contribution.amount <= _totalSpent
+            _contribution.previousTotalContributedToFraactionHub + _contribution.amount <= submittedAmount[_fundingNumber]
         ) {
             // contribution was fully used
             return _contribution.amount;
         } else if (
-            _contribution.previousTotalContributedToFraactionHub < _totalSpent
+            _contribution.previousTotalContributedToFraactionHub < submittedAmount[_fundingNumber]
         ) {
             // contribution was partially used
             return _totalSpent - _contribution.previousTotalContributedToFraactionHub;
@@ -1929,7 +1968,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         return 0;
     }
     
-    // ============ Internal: TransferTokens ============
+    // ============ Internal: TransferTokens ===================
 
     /**
     * @notice Transfer tokens to a recipient
@@ -1947,7 +1986,54 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         transfer(_to, _value);
     }
 
-        // ============ Internal: TransferMaticOrWmatic ============
+    // ============ Internal: ConvertTreasuryTokens ====================
+
+    function convertTreasuryTokens(bool _maticInGhst, uint256 _amount, address[] _path) internal {
+        require(
+            _amount > 0 &&
+            _path.length == 3,
+            "convertTreasuryTokens: converted amount has to be positive and path length equal to 3"
+        );
+        uint256[] memory amountOut = getAmountsOut(_path);
+        if (_maticInGhst) {
+            require(
+                _path[0] == wrappedMaticContract && 
+                totalTreasuryInMatic >= _amount,
+                "convertTreasuryTokens: not enough Matic or wrong path parameter"
+            );
+            uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
+            uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            require(
+                postGhstBal - initialGhstBal > 0,
+                "convertTreasuryTokens: GHST balance has to increase"
+            );
+            totalTreasuryInMatic -= _amount;
+            currentBalanceInMatic -= _amount;
+            totalContributedToFraactionHubInGhst += postGhstBal - initialGhstBal;
+            currentBalanceInGhst += postGhstBal - initialGhstBal;
+        } else {
+            require(
+                _path[0] == wrappedMaticContract && 
+                totalTreasuryInMatic >= _amount,
+                "convertTreasuryTokens: not enough Matic or wrong path parameter"
+            );
+            uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
+            uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            require(
+                postGhstBal - initialGhstBal > 0,
+                "convertTreasuryTokens: GHST balance has to increase"
+            );
+            totalTreasuryInMatic -= _amount;
+            currentBalanceInMatic -= _amount;
+            totalContributedToFraactionHubInGhst += postGhstBal - initialGhstBal;
+            currentBalanceInGhst += postGhstBal - initialGhstBal;
+        }
+        emit ConvertedTreasuryTokens(_maticInGhst, _amount, amountOut[2]);
+    }
+
+    // ============ Internal: TransferMaticOrWmatic ============
 
     /**
      * @notice Attempt to transfer MATIC to a recipient;
@@ -1990,7 +2076,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         // Here increase the gas limit a reasonable amount above the default, and try
         // to send MATIC to the recipient.
         // NOTE: This might allow the recipient to attempt a limited reentrancy attack.
-        (bool success, ) = _to.call{value: _value, gas: 30000}("");
+        (bool success, ) = _to.call{value: _value, gas: 40000}("");
         return success;
     }
 }
