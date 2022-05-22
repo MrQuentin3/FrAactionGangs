@@ -228,6 +228,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         rafflesContract = 0x6c723cac1E35FE29a175b287AE242d424c52c1CE;
         marketContract = ;
         settingsContract = ;
+        usdcContract = 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174;
         quickSwapRouterContract = 0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff;
         wrappedMaticContract = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
         DiamondInterface(diamondContract).setApprovalForAll(diamondContract, true);
@@ -1988,14 +1989,16 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     // ============ Internal: ConvertTreasuryTokens ====================
 
-    function convertTreasuryTokens(bool _maticInGhst, uint256 _amount, address[] _path) internal {
+    function convertTreasuryTokens(uint256 _amount, address[] _path) internal {
         require(
             _amount > 0 &&
-            _path.length == 3,
-            "convertTreasuryTokens: converted amount has to be positive and path length equal to 3"
+            _path.length == 3 &&
+            _path[1] == usdcContract,
+            "convertTreasuryTokens: converted amount has to be positive and path length equal to 3 and second path value be USDC address"
         );
+        uint256 tokenDelta;
         uint256[] memory amountOut = getAmountsOut(_path);
-        if (_maticInGhst) {
+        if (_path[0] == wrappedMaticContract) {
             require(
                 _path[0] == wrappedMaticContract && 
                 totalTreasuryInMatic >= _amount,
@@ -2004,33 +2007,79 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
             QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
             uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
+            tokenDelta = postGhstBal - initialGhstBal;
             require(
-                postGhstBal - initialGhstBal > 0,
+                tokenDelta > 0,
                 "convertTreasuryTokens: GHST balance has to increase"
             );
             totalTreasuryInMatic -= _amount;
             currentBalanceInMatic -= _amount;
-            totalContributedToFraactionHubInGhst += postGhstBal - initialGhstBal;
-            currentBalanceInGhst += postGhstBal - initialGhstBal;
+            totalContributedToFraactionHubInGhst += tokenDelta;
+            currentBalanceInGhst += tokenDelta;
         } else {
             require(
+                _path[2] == wrappedMaticContract && 
+                totalTreasuryInGhst >= _amount,
+                "convertTreasuryTokens: not enough GHST or wrong path parameter"
+            );
+            uint256 initialMaticBal = address(this).balance;
+            IERC20Upgradeable(ghstContract).approve(quickSwapRouterContract, _amount);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp);
+            uint256 postMaticBal = address(this).balance;
+            tokenDelta = postMaticBal - initialMaticBal;
+            require(
+                tokenDelta > 0,
+                "convertTreasuryTokens: MATIC balance has to increase"
+            );
+            totalTreasuryInGhst -= _amount;
+            currentBalanceInGhst -= _amount;
+            totalContributedToFraactionHubInMatic += tokenDelta;
+            currentBalanceInMatic += tokenDelta;
+        }
+        emit ConvertedTreasuryTokens(_path[0], _amount, tokenDelta);
+    }
+
+    function convertTokens(uint256 _maticTx, uint256 _amount, address[] _path) internal {
+        require(
+            _amount > 0,
+            "convertTokens: converted amount has to be positive"
+        );
+        require(
+            _path[0] != ghstContract &&
+            _path[length - 1] != ghstContract,
+            "convertTokens: use convertTreasuryTokens() with GHST input or output"
+        );
+        uint256 tokenDelta;
+        uint256[] memory amountOut = getAmountsOut(_path);
+        if (_maticTx == 1) {
+            require(
                 _path[0] == wrappedMaticContract && 
                 totalTreasuryInMatic >= _amount,
-                "convertTreasuryTokens: not enough Matic or wrong path parameter"
+                "convertTokens: not enough Matic or wrong path parameter"
             );
-            uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
             QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
-            uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-            require(
-                postGhstBal - initialGhstBal > 0,
-                "convertTreasuryTokens: GHST balance has to increase"
-            );
             totalTreasuryInMatic -= _amount;
             currentBalanceInMatic -= _amount;
-            totalContributedToFraactionHubInGhst += postGhstBal - initialGhstBal;
-            currentBalanceInGhst += postGhstBal - initialGhstBal;
+        } else if (_maticTx == 2) {
+            require(
+                _path[2] == wrappedMaticContract,
+                "convertTokens: last path value must be WMATIC"
+            );
+            IERC20Upgradeable(_path[0]).approve(quickSwapRouterContract, _amount);
+            uint256 initialMaticBal = address(this).balance;
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp);
+            uint256 postMaticBal = address(this).balance;
+            tokenDelta = postMaticBal - initialMaticBal;
+            require(
+                tokenDelta > 0,
+                "convertTokens: MATIC balance has to increase"
+            );
+            totalContributedToFraactionHubInMatic += tokenDelta;
+            currentBalanceInMatic += tokenDelta;
+        } else {
+            
         }
-        emit ConvertedTreasuryTokens(_maticInGhst, _amount, amountOut[2]);
+        emit ConvertedTokens(_maticTx, _amount, tokenDelta);
     }
 
     // ============ Internal: TransferMaticOrWmatic ============
