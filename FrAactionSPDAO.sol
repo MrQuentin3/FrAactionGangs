@@ -671,6 +671,11 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
     function reservePrice() public view returns(uint256) {
         return votingTokens == 0 ? 0 : reserveTotal / votingTokens;
     }
+
+    /// @notice provide the current reserve price of the FrAactionHub 
+    function fundingPrice() public view returns(uint256) {
+        return votingTokens == 0 ? 0 : fundingTotal / votingTokens;
+    }
     
     /// @notice inform if the bid is open (return true) or not (return false)
     function openForBid() public view returns(bool) {
@@ -1020,8 +1025,8 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             mergerStatus == MergerStatus.ACTIVE,
             "confirmFinalizedMerger: merger not active"
         );
+        delete proposedMerger[target];
         target = address(0);
-        delete proposedMerger[_mergerTarget];
         mergerStatus == MergeStatus.INACTIVE;
         finalAuctionStatus = FinalAuctionStatus.ENDED;
     }
@@ -1067,7 +1072,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             mergerStatus == MergerStatus.INACTIVE, 
             "initiateMergerTo: caller not an owner of the FrAactionHub"
         );
-        proposedMergerFrom[_mergerTarget] = true;
+        proposedMergerFrom[target] = true;
         emit MergerProposedTo(msg.sender);
     }
     
@@ -1129,7 +1134,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     mergerStatus = MergerStatus.ACTIVE;
                     merging = true;
                     FraactionInterface(target).confirmMerger();
-                    emit MergerInitiated(mergerTarget);
+                    emit MergerInitiated(_mergerTarget);
                 }
                 uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
                 uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
@@ -1231,14 +1236,22 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             FraactionInterface(target).balanceOf(msg.sender) > 0, 
             "finalizeMerger: user not an owner of the FrAactionHub"
         );
-        address[] memory ownersFrom = FraactionInterface(mergerTarget).getOwners();
+        address[] memory ownersFrom = FraactionInterface(target).getOwners();
         uint256 startIndex = 0;
         uint256 endIndex = ownersFrom.length;
         if (split == 0) {
             maxOwnersArrayLength = ISettings(settingsContract).maxOwnersArrayLength();
-            uint256 agreedReserveTotal = FraactionInterface(mergerTarget).targetReserveTotal(address(this));
-            uint256 agreedReserveTotalFrom = targetReserveTotal[mergerTarget];
-            newShareFrom = totalSupply() * agreedReserveTotalFrom / agreedReserveTotal;
+            uint256 agreedReserveTotal = FraactionInterface(target).targetReserveTotal(address(this));
+            uint256 agreedReserveTotalFrom = targetReserveTotal[target];
+            if (sameReserveCurrency[target]) {
+                newShareFrom = totalSupply() * agreedReserveTotalFrom / agreedReserveTotal;
+            } else {
+                if (exitInGhst) {
+                    newShareFrom = totalSupply() * (agreedReserveTotalFrom * (ISettings(settingsContract).convertFundingPrice(1) / 10**8)) / agreedReserveTotal;
+                } else {
+                    newShareFrom = totalSupply() * (agreedReserveTotalFrom * (ISettings(settingsContract).convertFundingPrice(0) / 10**8)) / agreedReserveTotal;
+                }
+            }
             if (ownersFrom.length > maxOwnersArrayLength) {
                 if (ownersFrom.length % maxOwnersArrayLength > 0) {
                     multiple = ownersFrom.length / maxOwnersArrayLength + 1;
@@ -1266,15 +1279,15 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 splitCounter = 0;
                 multiple = 0;
             }
-            totalTreasuryInGhst += FraactionInterface(mergerTarget).totalTreasuryInGhst();
-            totalTreasuryInMatic += FraactionInterface(mergerTarget).totalTreasuryInMatic();
+            totalTreasuryInGhst += FraactionInterface(target).totalTreasuryInGhst();
+            totalTreasuryInMatic += FraactionInterface(target).totalTreasuryInMatic();
             mergerStatus = MergerStatus.INACTIVE;
-            FraactionInterface(mergerTarget).confirmFinalizedMerger();
-            emit MergerFinalized(mergerTarget);
+            FraactionInterface(target).confirmFinalizedMerger();
+            emit MergerFinalized(target);
         }
         if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
         if (startIndex > ownersFrom.length) return;
-        uint256 tokenSupplyFrom = FraactionInterface(mergerTarget).totalSupply();
+        uint256 tokenSupplyFrom = FraactionInterface(target).totalSupply();
         for (uint i = startIndex; i < endIndex; i++) {
             for (uint j = 0; j < ownersAddress.length; j++) {
                 if (ownersFrom[i] == ownersAddress[j]) {
@@ -1284,7 +1297,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             if (existing == false) ownersAddress.push(ownersFrom[i]);
             mint(
                 ownersFrom[i], 
-                newShareFrom * FraactionInterface(mergerTarget).balanceOf(ownersFrom[i]) / tokenSupplyFrom
+                newShareFrom * FraactionInterface(target).balanceOf(ownersFrom[i]) / tokenSupplyFrom
             );
         }
         feesContributor[msg.sender]++;
@@ -2001,7 +2014,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             ownersAddress.push(ownersFrom[i]);
             mint(
                 ownersFrom[i], 
-                FraactionInterface(demergerTarget).balanceOf(ownersFrom[i])
+                FraactionInterface(target).balanceOf(ownersFrom[i])
             );
         }
         feesContributor[msg.sender]++;

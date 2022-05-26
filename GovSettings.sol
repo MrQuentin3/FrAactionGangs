@@ -331,7 +331,7 @@ contract Settings is Ownable, ISettings {
         amUsdcCollateral = 0x1a13F4Ca1d028320A707D99520AbFefca3998b7F;
         amWbtcCollateral = 0x5c2ed810328349100A66B82b78a1791B101C9D61;
         amWmaticCollateral = 0x8dF3aad3a84da6b69A4DA8aeC3eA40d9091B2Ac4;
-        // Below oracles are expressing tokens in USD with 8 decimals except for GHST only expressed in ETH (18 decimals) by the ChainLink oracle
+        // Below oracles are expressing tokens in USD with 8 decimals 
         daiOracle = 0x4746DeC9e833A82EC7C2C1356372CcF2cfcD2F3D;
         wethOracle = 0xF9680D99D6C9589e2a93a78A04A279e509205945;
         aaveOracle = 0x72484B12719E23115761D5DA1646945632979bB6;
@@ -556,79 +556,91 @@ contract Settings is Ownable, ISettings {
     
     // ============ external functions : converting maTokens into GHST with oracle price feeds ============
     
+    function convertFundingPrice(bool maticToGhst) external returns (uint256 _rate) {
+        uint256 ghstPriceInUsd = getLatestPrice(ghstOracle);
+        uint256 usdPriceInGhst = (1 / (ghstPriceInUsd / 10**8)) * 10**8;
+        uint256 maticPriceInUsd = getLatestPrice(maticOracle);
+        uint256 usdPriceInMatic = (1 / (maticPriceInUsd / 10**8)) * 10**8;
+        if (maticToGhst) {
+            _rate = (usdPriceInGhst / usdPriceInMatic) * 10**8;
+        } else {
+            _rate = (usdPriceInMatic / usdPriceInGhst) * 10**8;
+        }
+    }
+
      /**
      * @notice convert a collateral type value into GHST in order the calculate the contributor's share in GHST during a funding round 
      * or a colletaral stake increase
-     * @return ghstRate_ the exchange rate expressing the value of a given collateral type in GHST at the current market price 
+     * @return ghstRate the exchange rate expressing the value of a given collateral type in GHST at the current market price 
      */
      
-    function collateralTypeToGhst(address _collateralType) external returns (uint256 ghstRate_) {
+    function collateralTypeToGhst(address _collateralType) external returns (uint256 _ghstRate) {
         uint256 ghstPriceInUsd = getLatestPrice(ghstOracle);
         uint256 usdPriceInGhst = (1 / (ghstPriceInUsd / 10**8)) * 10**8;
         if (_collateralType = maDaiCollateral) {
             uint256 maDaiPriceInUsd = getLatestPrice(daiOracle);
             uint256 usdPriceInMaDai = (1 / (maDaiPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaDai)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaDai) * 10**8;
         } else if (_collateralType = maWethCollateral) {
             uint256 maWethPriceInUsd = getLatestPrice(wethOracle);
             uint256 usdPriceInMaWeth = (1 / (maWethPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaWeth)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaWeth) * 10**8;
         } else if (_collateralType = maAaveCollateral) {
             uint256 maAavePriceInUsd = getLatestPrice(aaveOracle);
             uint256 usdPriceInMaAave = (1 / (maAavePriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaAave)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaAave) * 10**8;
         } else if (_collateralType = maLinkCollateral) {
             uint256 maLinkPriceInUsd = getLatestPrice(linkOracle);
             uint256 usdPriceInMaLink = (1 / (maLinkPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaLink)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaLink) * 10**8;
         } else if (_collateralType = maUsdtCollateral) {
             uint256 maUsdtPriceInUsd = getLatestPrice(usdtOracle);
             uint256 usdPriceInMaUsdt = (1 / (maUsdtPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaUsdt)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaUsdt) * 10**8;
         } else if (_collateralType = maUsdcCollateral) {
             uint256 maUsdcPriceInUsd = getLatestPrice(usdcOracle);
             uint256 usdPriceInMaUsdc = (1 / (maUsdcPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaUsdc)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaUsdc) * 10**8;
         } else if (_collateralType = maTusdCollateral) {
             uint256 maTusdPriceInUsd = getLatestPrice(tusdOracle);
             uint256 usdPriceInMaTusd = (1 / (maTusdPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaTusd)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaTusd) * 10**8;
         } else if (_collateralType = maUniCollateral) {
             uint256 maUniPriceInUsd = getLatestPrice(uniOracle);
             uint256 usdPriceInMaUni = (1 / (maUniPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaUni)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaUni) * 10**8;
         } else if (_collateralType = maYfiCollateral) {
             uint256 maYfiPriceInUsd = getLatestPrice(yfiOracle);
             uint256 usdPriceInMaYfi = (1 / (maYfiPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInMaYfi)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInMaYfi) * 10**8;
         } else if (_collateralType = amDaiCollateral) {
             uint256 amDaiPriceInUsd = getLatestPrice(daiOracle);
             uint256 usdPriceInAmDai = (1 / (amDaiPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmDai)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmDai) * 10**8;
         } else if (_collateralType = amWethCollateral) {
             uint256 amWethPriceInUsd = getLatestPrice(wethOracle);
             uint256 usdPriceInAmWeth = (1 / (amWethPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmWeth)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmWeth) * 10**8;
         } else if (_collateralType = amAaveCollateral) {
             uint256 amAavePriceInUsd = getLatestPrice(aaveOracle);
             uint256 usdPriceInAmAave = (1 / (amAavePriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmAave)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmAave) * 10**8;
         } else if (_collateralType = amUsdtCollateral) {
             uint256 amUsdtPriceInUsd = getLatestPrice(usdtOracle);
             uint256 usdPriceInAmUsdt = (1 / (amUsdtPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmUsdt)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmUsdt) * 10**8;
         } else if (_collateralType = amUsdcCollateral) {
             uint256 amUsdcPriceInUsd = getLatestPrice(usdcOracle);
             uint256 usdPriceInAmUsdc = (1 / (amUsdcPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmUsdc)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmUsdc) * 10**8;
         } else if (_collateralType = amWbtcCollateral) {
             uint256 amWbtcPriceInUsd = getLatestPrice(wbtcOracle);
             uint256 usdPriceInAmWbtc = (1 / (amWbtcPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmWbtc)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmWbtc) * 10**8;
         } else if (_collateralType = amWmaticCollateral) {
             uint256 amWmaticPriceInUsd = getLatestPrice(maticOracle);
             uint256 usdPriceInAmWmatic = (1 / (amWmaticPriceInUsd / 10**8)) * 10**8;
-            ghstRate_ = (usdPriceInGhst / (usdPriceInAmWmatic)) * 10**8;
+            _ghstRate = (usdPriceInGhst / usdPriceInAmWmatic) * 10**8;
         }
     }
 }

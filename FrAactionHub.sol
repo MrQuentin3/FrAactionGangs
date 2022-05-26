@@ -1016,7 +1016,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     function deleteTokens() external {
         require(
             finalAuctionStatus == FinalAuctionStatus.DELETINGTOKENS, 
-            "deleteTokens: no tokens to cash out"
+            "deleteTokens: no tokens to delete"
         );
         if (erc20Tokens.length > 0) {
             delete erc20Tokens;
@@ -1249,6 +1249,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     symbol
                 );
                 firstRound = false;
+                if (fundingInGhst[fundingNumber]) exitInGhst = true;
             } else {
                 mint(address(this), valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]));
             }
@@ -1390,7 +1391,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             // transfer the fee to FrAactionDAO
             _fee = _getFundingFee(totalContributedToPortalFunding);
             ERC20lib.transfer(collateralType, fraactionDaoMultisig, _fee);
-            mint(address(this), valueToTokens(totalContributedToPortalFunding));
+            mint(address(this), valueToTokens(totalContributedToPortalFunding, 1));
             portalFundingResult[portalFundingNumber] = 1;
             totalContributedToFraactionHubInGhst += totalContributedToPortalFunding;
         } else {
@@ -1540,7 +1541,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
             transferExternalErc20(_extErc20Address, _extErc20Value);
         } else {
-            if (totalNumberExtAssets != extAssetsTansferred) return;
             if (totalTreasuryInGhst > 0) ERC20lib.transferFrom(ghstContract, address(this), target, totalTreasuryInGhst);
             if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
             totalTreasuryInGhst = 0;
@@ -1548,8 +1548,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             mergerStatus = MergerStatus.INACTIVE;
             finalAuctionStatus = FinalAuctionStatus.ENDED;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
-            residualGhst = bal - currentBalanceInGhst;
-            residualMatic = address(this).balance - currentBalanceInMatic;
+            int residualGhst = bal - currentBalanceInGhst;
+            int residualMatic = address(this).balance - currentBalanceInMatic;
             if (exitInGhst) {
                 redeemedCollateral[ghstContract].push(livePrice + residualGhst);
                 if (collateralToRedeem[ghstContract] == 0) {
@@ -1682,7 +1682,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         ownerTotalContributed[stakingContributor] += convertedCollateralToGhst;
         totalContributedToFraactionHubInGhst += convertedCollateralToGhst;
         ERC20lib.transferFrom(collateral, stakingContributor, address(this), _stakeAmount);
-        mint(stakingContributor, valueToTokens(convertedCollateralToGhst));
+        mint(stakingContributor, valueToTokens(convertedCollateralToGhst, 1));
         emit ContributedStaking(stakingContributor, _tokenId, _stakeAmount);
         (bool success, bytes memory returnData) =
             diamondContract.call(
@@ -1757,26 +1757,14 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
      */
     
      function forceFinalized() 
-         external
-         onlyFraactionDao
+        external
+        onlyFraactionDao
     {
         fundingStatus = FundingStatus.INACTIVE;
         mergerStatus = MergerStatus.INACTIVE;
         demergerStatus = DemergerStatus.INACTIVE;
         portalFundingStatus = PortalFundingStatus.INACTIVE;
         finalAuctionStatus = FinalAuctionStatus.INACTIVE;
-    }
-
-    /**
-     * @notice Escape hatch: in case of emergency,
-     * FrAactionDAO can use emergencyWithdrawGhst to withdraw
-     * GHST stuck in the contract
-     */
-    function emergencyWithdrawGhst(uint256 _value)
-        external
-        onlyFraactionDao
-    {
-        ERC20lib.transfer(diamondContract, fraactionDaoMultisig, _value);
     }
 
     /**
@@ -1796,14 +1784,22 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     // ======== Public: Utility Calculations =========
 
     /**
-     * @notice Convert GHST value to equivalent token amount
+     * @notice Convert GHST or MATIC value to equivalent token amount
      */
-    function valueToTokens(uint256 _value)
+    function valueToTokens(uint256 _value, bool _inGhst)
         public
         pure
         returns (uint256 _tokens)
     {
-        _tokens = _value * TOKEN_SCALE;
+        if (exitInGhst == _inGhst) {
+            _tokens = votingTokens / fundingTotal * _value * TOKEN_SCALE;
+        } else {
+            if (exitInGhst) {
+                _tokens = votingTokens / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(0) / 10**8)) * _value * TOKEN_SCALE;
+            } else {
+                _tokens = votingTokens / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(1) / 10**8)) * _value * TOKEN_SCALE;
+            }
+        }
     }
 
     // ============ Internal: Price and fees ============
@@ -1862,12 +1858,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 if (isBid(_fundingNumber)) {
                     uint256 _totalUsedForBid = _totalGhstOrMaticUsedForBid(_contributor, _fundingNumber);
                     if (_totalUsedForBid > 0) {
-                        _tokenAmount = valueToTokens(_totalUsedForBid);
+                        _tokenAmount = valueToTokens(_totalUsedForBid, fundingInGhst[_fundingNumber]);
                     }
                     // the rest of the contributor's GHST or MATIC should be returned
                     _ghstOrMaticAmount = contribution - _totalUsedForBid;
                 } else {
-                    _tokenAmount = valueToTokens(contribution);
+                    _tokenAmount = valueToTokens(contribution, fundingInGhst[_fundingNumber]);
                 }
                 if (newOwner[_contributor] == true) {
                     ownersAddress.push(_contributor);
@@ -1907,7 +1903,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 contribution = ownerContributedToPortalFunding[_contributor][_portalFundingNumber];
         if (contribution > 0) {  
             if (_successPortalFunding == true) {
-                _tokenAmount = valueToTokens(contribution);
+                _tokenAmount = valueToTokens(contribution, 1);
             } else {
                 _collateralAmount = ownerContributedCollateral[_contributor][_portalFundingNumber];
                 _collateralType = ownerCollateralType[_contributor][_portalFundingNumber];
@@ -1997,7 +1993,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "convertTreasuryTokens: converted amount has to be positive and path length equal to 3 and second path value be USDC address"
         );
         uint256 tokenDelta;
-        uint256[] memory amountOut = getAmountsOut(_path);
+        uint256[] memory amountOut = getAmountsOut(_amount, _path);
         if (_path[0] == wrappedMaticContract) {
             require(
                 _path[0] == wrappedMaticContract && 
@@ -2005,7 +2001,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 "convertTreasuryTokens: not enough Matic or wrong path parameter"
             );
             uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(amountOut[2], _path, address(this), block.timestamp);
             uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
             tokenDelta = postGhstBal - initialGhstBal;
             require(
@@ -2024,7 +2020,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             );
             uint256 initialMaticBal = address(this).balance;
             IERC20Upgradeable(ghstContract).approve(quickSwapRouterContract, _amount);
-            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount, amountOut[2], _path, address(this), block.timestamp);
             uint256 postMaticBal = address(this).balance;
             tokenDelta = postMaticBal - initialMaticBal;
             require(
@@ -2039,7 +2035,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         emit ConvertedTreasuryTokens(_path[0], _amount, tokenDelta);
     }
 
-    function convertTokens(uint256 _maticTx, uint256 _amount, address[] _path) internal {
+    function convertTokens(uint256 _unwrappedMatic, uint256 _amount, address[] _path) internal {
         require(
             _amount > 0,
             "convertTokens: converted amount has to be positive"
@@ -2051,23 +2047,23 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         uint256 tokenDelta;
         uint256[] memory amountOut = getAmountsOut(_path);
-        if (_maticTx == 1) {
+        if (_unwrappedMatic == 1) {
             require(
                 _path[0] == wrappedMaticContract && 
                 totalTreasuryInMatic >= _amount,
                 "convertTokens: not enough Matic or wrong path parameter"
             );
-            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp){value: _amount};
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(amountOut[length - 1], _path, address(this), block.timestamp);
             totalTreasuryInMatic -= _amount;
             currentBalanceInMatic -= _amount;
-        } else if (_maticTx == 2) {
+        } else if (_unwrappedMatic == 2) {
             require(
                 _path[2] == wrappedMaticContract,
                 "convertTokens: last path value must be WMATIC"
             );
             IERC20Upgradeable(_path[0]).approve(quickSwapRouterContract, _amount);
             uint256 initialMaticBal = address(this).balance;
-            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(amountOut[2], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount, amountOut[length - 1], _path, address(this), block.timestamp);
             uint256 postMaticBal = address(this).balance;
             tokenDelta = postMaticBal - initialMaticBal;
             require(
@@ -2077,9 +2073,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalContributedToFraactionHubInMatic += tokenDelta;
             currentBalanceInMatic += tokenDelta;
         } else {
-            
+            IERC20Upgradeable(_path[0]).approve(quickSwapRouterContract, _amount);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount, amountOut[length - 1], _path, address(this), block.timestamp);
         }
-        emit ConvertedTokens(_maticTx, _amount, tokenDelta);
+        emit ConvertedTokens(_unwrappedMatic, _amount, tokenDelta);
     }
 
     // ============ Internal: TransferMaticOrWmatic ============
