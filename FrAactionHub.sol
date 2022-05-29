@@ -890,6 +890,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             balanceOf(_contributor) > 0, 
             "claim: no tokens to cash out"
         );
+        require(
+            mergerStatus != MergerStatus.DELETINGTOKENS, 
+            "claim: tokens have to be deleted before the final claim"
+        );
         // calculate the amount of fractional NFT tokens owed to the user
         // based on how much GHST they contributed towards the new funding,
         // or the amount of GHST owed to the user if the FrAactionHub deadline is reached
@@ -995,27 +999,49 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             sumGhst,
             sumMatic
         );
-        if (finalAuctionStatus == FinalAuctionStatus.ENDED) {
+        if (mergerStatus == MergerStatus.ENDED) {
             claimedCounter++;
             burn(_contributor, balanceOf(_contributor));
+            delete ownersAddress[ownersAddressIndex[_contributor]];
             if (claimedCounter == ownersAddress.length) {
                 claimedCounter = 0;
-                if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
-                    finalAuctionStatus = FinalAuctionStatus.DELETINGTOKENS;
-                else {
-                    delete erc20Tokens;
-                    delete nfts;
-                    delete erc1155Tokens;
-                    finalAuctionStatus = FinalAuctionStatus.INACTIVE;
-                }
                 firstRound = true;
+                delete ownersAddress;
+                if (proposedTakeoverFrom[target]) {
+                    mergerStatus == MergerStatus.TAKINGOVER;
+                } else {
+                    mergerStatus == MergerStatus.INACTIVE;
+                }
+                emit FinalClaim (mergerStatus);
+            }
+        }
+    }
+
+    function claimReward(address _ownerAddress) internal {
+        mint(_ownerAddress, rewardInWei);
+    }
+
+    function takingover() internal {
+        require(
+            mergerStatus == MergerStatus.TAKINGOVER, 
+            "takingover: cannot takeover before previous owners claimed and burnt their tokens"
+        );
+        demergerStatus = DemergerStatus.ASSETSTRANSFERRED;
+        finalizeDemerger();
+        if (!takenover || split = 7) {
+            transferExternalErc20();
+            if (split == 0) {
+                delete proposedTakeoverFrom[target];
+                demergerStatus = DemergerStatus.INACTIVE;
+                mergerStatus == MergerStatus.INACTIVE;
+                emit Takenover(address(this));
             }
         }
     }
 
     function deleteTokens() external {
         require(
-            finalAuctionStatus == FinalAuctionStatus.DELETINGTOKENS, 
+            mergerStatus == MergerStatus.DELETINGTOKENS, 
             "deleteTokens: no tokens to delete"
         );
         if (erc20Tokens.length > 0) {
@@ -1025,7 +1051,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         } else if (erc1155Tokens.length > 0) {
             delete erc1155Tokens;
         } else {
-            finalAuctionStatus = FinalAuctionStatus.INACTIVE;
+            mergerStatus == MergerStatus.ENDED;
         }
     }
 
@@ -1065,11 +1091,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         for (uint i = 0; i < ownersAddress.length; i++) {
             claim(ownersAddress[i]);
         }
-        feesContributor[msg.sender]++;
-        if (feesContributor[msg.sender] == ISettings(settingsContract).feesRewardTrigger()) {
-            mint(msg.sender, ISettings(settingsContract).feesReward());
-            feesContributor[msg.sender] = 0;
-        }
+        claimReward(msg.sender);
     }    
 
     // ======== External: Auction funding =========
@@ -1090,6 +1112,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         require(
             portalFundingStatus == PortalFundingStatus.INACTIVE,
             "startBid: FrAactionHub already having a new portal funding"
+        );
+        require(
+            FraactionInterface(_auctionTarget).openForBidOrMerger(),
+            "startBid: FrAactionHub not open for merger or bid"
         );
         if (firstRound) {
             require(
@@ -1186,14 +1212,15 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             fundingStatus == FundingStatus.FUNDING, 
             "submitBid: FrAactionHub is not bidding yet"
         );
-        bool checkOpenBid = FraactionInterface(auctionTarget).openForBid();
+        if (!FraactionInterface(auctionTarget).openForBidOrMerger()) fundingStatus = FundingStatus.SUBMITTED;
+        bool checkActiveBid = FraactionInterface(auctionTarget).activeBid();
         uint256 submittedBid = FraactionInterface(auctionTarget).getMinBid();
         ERC20Upgradeable(auctionTarget).approve(auctionTarget, MAX_INT);
         require(
             submittedBid <= _getMaxBid(), 
             "submitBid: bid amount must be less than the maximum bid possible"
         );
-        if (checkOpenBid) {
+        if (checkActiveBid) {
             if (fundingInGhst[fundingNumber]) {
                 FraactionInterface(auctionTarget).bid(); 
             } else {
@@ -1442,7 +1469,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         } else {
             currentBalanceInMatic += value;
         }
-        auctionEnd = block.timestamp + ISettings(settingsContract).auctionLength();
+        auctionEnd = block.timestamp + (ISettings(settingsContract).auctionLength() * 1 days);
         finalAuctionStatus = FinalAuctionStatus.ACTIVE;
         livePrice = value;
         winning = msg.sender;
@@ -1545,8 +1572,15 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
             totalTreasuryInGhst = 0;
             totalTreasuryInMatic = 0;
-            mergerStatus = MergerStatus.INACTIVE;
-            finalAuctionStatus = FinalAuctionStatus.ENDED;
+            if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
+                mergerStatus = MergerStatus.DELETINGTOKENS;
+            } else {
+                delete erc20Tokens;
+                delete nfts;
+                delete erc1155Tokens;
+                mergerStatus = MergerStatus.ENDED;
+            }
+            finalAuctionStatus = FinalAuctionStatus.INACTIVE;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
             int residualGhst = bal - currentBalanceInGhst;
             int residualMatic = address(this).balance - currentBalanceInMatic;
@@ -1649,7 +1683,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             extNftsTransferred = false;
             ext1155Transferred = false;
             extErc20Transferred = false;
-            if (totalNumberExtAssets != extAssetsTansferred) return;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
             if (bal > 0) ERC20lib.transferFrom(ghstContract, address(this), msg.sender, bal);
             if (address(this).balance > 0) transferMaticOrWmatic(msg.sender, address(this).balance);
@@ -1867,6 +1900,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 }
                 if (newOwner[_contributor] == true) {
                     ownersAddress.push(_contributor);
+                    ownersAddressIndex[_contributor] = ownersAddress.length - 1;
                     newOwner[_contributor] = false;
                 }
             } else {
