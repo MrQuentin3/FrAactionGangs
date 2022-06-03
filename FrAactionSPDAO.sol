@@ -1623,17 +1623,18 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (endIndex > erc20Value.length) endIndex = erc20Value.length;
         if (startIndex > erc20Value.length) return;
         uint256 assetCounter;
+        address replace;
         for (uint i = startIndex; i < endIndex; i++) {
             try LibERC20.transferFrom(erc20Address[i], addresse(this), target, erc20Value[i]) {
                 ownedErc20[erc20Address[i]] -= erc20Value[i];
-                if (demergerStatus == DemergerStatus.ACTIVE) {
-                    for (uint j = 0; j < erc20Tokens.length; j++) {
-                        if (erc20Tokens[j] == erc20Address[i]) {
-                            erc20Tokens[j] = erc20Tokens[erc20Tokens.length - 1];
-                            erc20Tokens.pop();
-                        }
-                    }
+                if (ownedErc20[erc20Address[i]] == 0 && demergerStatus == DemergerStatus.ACTIVE) {
+                    replace = erc20Tokens[erc20Tokens.length - 1];
+                    erc20Tokens[erc20Index[erc20Address[i]]] = replace;
+                    erc20Index[replace] = erc20Index[erc20Address[i]];
+                    delete erc20Index[erc20Address[i]];
+                    erc20Tokens.pop();
                 }
+                if (mergerStatus == MergerStatus.ACTIVE) delete erc20Index[erc20Address[i]];
             } catch {
                 nonTransferredAssets++;
                 emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
@@ -1695,17 +1696,18 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         if (endIndex > nftsId.length) endIndex = nftsId.length;
         if (startIndex > nftsId.length) return;
         uint256 assetCounter;
+        address replace;
         for (uint i = startIndex; i < endIndex; i++) {
             try IERC721Upgradeable(nftsAddress[i]).safeTransferFrom(address(this), target, nftsId[i]) {
                 delete ownedNfts[nftAddress[i]][nftsId[i]];
                 if (demergerStatus == DemergerStatus.ACTIVE) {
-                    for (uint j = 0; j < nfts.length; j++) {
-                        if (nfts[j] == nftsAddress[i]) {
-                            nfts[j] = nfts[nfts.length - 1];
-                            nfts.pop();
-                        }
-                    }
+                    replace = nfts[nfts.length - 1];
+                    nfts[nftsIndex[nftsAddress[i]]] = replace;
+                    nftsIndex[replace] = nftsIndex[nftsAddress[i]];
+                    delete nftsIndex[nftsAddress[i]];
+                    nfts.pop();
                 }
+                if (mergerStatus == MergerStatus.ACTIVE) delete nftsIndex[nftsAddress[i]];
             } catch {
                 nonTransferredAssets++;
                 emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
@@ -1773,19 +1775,22 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             if (address1155[i] == address(0)) continue;
             uint256 redundancyCounter;
             redundancyCounter++;
+            address replace;
             uint256[] memory indexRedundancy = new indexRedundancy[](endIndex - startIndex + 1);
             for (uint j = i + 1; j < endIndex; j++) {
                 if (address1155[j] == address(0)) continue;
                 if (address1155[i] == address1155[j]) {
                     ownedErc1155[address1155[j]][ids1155[j]] -= quantity1155[j];
-                    if (demergerStatus == DemergerStatus.ACTIVE) {
-                        for (uint k = 0; k < erc1155Tokens.length; k++) {
-                            if (erc1155Tokens[k].address == address1155[j]) {
-                                erc1155Tokens[k] = erc1155Tokens[erc1155Tokens.length - 1];
-                                erc1155Tokens.pop();
-                            }
-                        }
+                    if (demergerStatus == DemergerStatus.ACTIVE && ownedErc1155[address1155[j]][ids1155[j]] == 0) {
+                        erc1155Tokens[j] = erc1155Tokens[erc1155Tokens.length - 1];
+                        erc1155Tokens.pop();
+                        replace = erc1155Tokens[erc1155Tokens.length - 1];
+                        erc1155Tokens[erc1155Index[address1155[i]]] = replace;
+                        erc1155Index[replace] = erc1155Index[address1155[j]];
+                        delete nftsIndex[address1155[j]];
+                        erc1155Tokens.pop();
                     }
+                    if (mergerStatus == MergerStatus.ACTIVE) delete erc1155Index[address1155[i]];
                     indexRedundancy[redundancyCounter] = j;
                     delete address1155[j];
                     redundancyCounter++;
@@ -1796,25 +1801,21 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 batchIds[indexCounter] = ids1155[i];
                 batchQuantity[indexCounter] = quantity1155[i];
                 indexCounter++;
-                for (uint k = i + 1; k < endIndex; k++) {
-                    for (uint l = 0; l < indexRedundancy.length; l++) {
-                        if (k == indexRedundancy[l]) {
-                            batchIds[indexCounter] = ids1155[k];
-                            batchQuantity[indexCounter] = quantity1155[k];
-                            indexRedundancy[l] = 0;
-                            indexCounter++;
-                        }
-                    }
+                for (uint k = 1; k < redundancyCounter; k++) {
+                    batchIds[indexCounter] = ids1155[indexRedundancy[k]];
+                    batchQuantity[indexCounter] = quantity1155[indexRedundancy[k]];
+                    indexCounter++;
                 }
                 try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
                     ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
-                    if (demergerStatus == DemergerStatus.ACTIVE) {
-                        for (uint k = 0; k < erc1155Tokens.length; k++) {
-                            if (erc1155Tokens[k].address == address1155[i]) {
-                                erc1155Tokens[k] = erc1155Tokens[erc1155Tokens.length - 1];
-                                erc1155Tokens.pop();
-                            }
-                        }
+                    if (demergerStatus == DemergerStatus.ACTIVE && ownedErc1155[address1155[i]][ids1155[i]] == 0) {
+                        erc1155Tokens[i] = erc1155Tokens[erc1155Tokens.length - 1];
+                        erc1155Tokens.pop();
+                        replace = erc1155Tokens[erc1155Tokens.length - 1];
+                        erc1155Tokens[erc1155Index[address1155[i]]] = replace;
+                        erc1155Index[replace] = erc1155Index[address1155[i]];
+                        delete nftsIndex[address1155[i]];
+                        erc1155Tokens.pop();
                     }
                 } catch {
                     nonTransferredAssets += redundancyCounter;

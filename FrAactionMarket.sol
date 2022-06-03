@@ -45,7 +45,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         bool isHub;
         address author;
         address tokenAddress;
-        uint256 hubOrGangId;
+        uint256 hubId;
         uint256 quantity;
         uint256 priceInWei;
         uint256 listingEnd;
@@ -60,7 +60,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
     mapping(uint256 => bool) public buyingNfts;
     mapping(uint256 => uint256) public buyingItems;
 
-    // Category = 0: realms, 1: aavegotchi & portals, 2: items, 3: tickets, 4: non-Aavegotchi NFTs, 5: 1155 non-Aavegotchi
+    // Category = 0: realms, 1: aavegotchi & portals, 2: items, 3: tickets, 4: non-Aavegotchi NFTs, 5: non-Aavegotchi ERC1155 tokens, 6: ERC20 tokens
     function addToken(
         bool _forSale, 
         bool _inGhst,
@@ -72,24 +72,20 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         uint256 _numberOfDays, 
         uint256 _priceInWei,
         address _tokenAddress
-    ) external nonReentrant {
-        require(
-            _tokenId != 0,
-            "addToken: token ID has to be valid"
-        );
-        if (_category == 2 || _category == 3) {
+    ) external payable nonReentrant {
+        if (_category == 2 || _category == 3 || _category == 5) {
             require(
                 _quantity > 0,
                 "addToken: quantity has to be superior to zero"
             );
         }
         require(
-            _childTokensId.length + _childTokensQuantity.length + _childTokensCategory.length + _childTokensAddress.length < ISettings(settingsContract).MaxTransferLimit(), 
+            _childTokensId.length < ISettings(settingsContract).MaxTransferLimit(), 
             "addToken: cannot add more tokens than the GovSettings allowed limit"
         );
         require(
             _numberOfDays > ISettings(settingsContract).minSaleLength(),
-            "addToken: token ID has to be valid"
+            "addToken: listing length has to be valid"
         );
         tokenNumber++;
         if (_forSale) {
@@ -98,7 +94,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
                     "addToken: caller not owner of this nft"
                 );
                 sellingNfts[_tokenId] = true;
-            } else if (_category == 2 || _category == 3) {
+            } else if (_category == 2 || _category == 3 || _category == 5) {
                 require(DiamondInterface(_tokenAddress).balanceOf(msg.sender, _tokenId) == _quantity,
                     "addToken: caller not owner of this amount of this item type"
                 );
@@ -218,15 +214,15 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
 
     function addFraactionToken(
         address _tokenAddress, 
-        uint256 _hubOrGangId, 
+        uint256 _hubId, 
         uint256 _value, 
         uint256 _priceInWei, 
         uint256 _numberOfDays,  
         bool _inGhst
     ) external nonReentrant {
         require(
-            _hubOrGangId != 0,
-            "addFraactionToken: hubOrGangId ID has to be valid"
+            _hubId != 0,
+            "addFraactionToken: hubId ID has to be valid"
         );
         require(
             _value > 0,
@@ -251,7 +247,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         }
         if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) fraactionToken[fraactionTokenNumber].isHub = true;
         if (_inGhst) fraactionToken[fraactionTokenNumber].inGhst = true;
-        fraactionToken[fraactionTokenNumber].hubOrGangId = _hubOrGangId;
+        fraactionToken[fraactionTokenNumber].hubId = _hubId;
         fraactionToken[fraactionTokenNumber].active = true;
         fraactionToken[fraactionTokenNumber].author = msg.sender;
         fraactionToken[fraactionTokenNumber].tokenAddress = _tokenAddress;

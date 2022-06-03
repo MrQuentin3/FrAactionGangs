@@ -230,6 +230,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         settingsContract = ;
         usdcContract = 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174;
         quickSwapRouterContract = 0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff;
+        aavePoolContract = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+        aaveProtocolDataProviderContract = 0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654;
         wrappedMaticContract = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
         DiamondInterface(diamondContract).setApprovalForAll(diamondContract, true);
         DiamondInterface(stakingContract).setApprovalForAll(rafflesContract, true);
@@ -259,9 +261,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalTreasuryInMatic += msg.value;
         } else {
             ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
-            if (ownedErc20[_tokenAddress] == 0) {
+            if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
                 totalNumberExtAssets++;
                 erc20tokens.push(_tokenAddress);
+                erc20Index[_tokenAddress] = erc20tokens.length - 1;
             }
             ownedErc20[_tokenAddress] += value;
         }
@@ -275,10 +278,11 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "donateExtNft: Aavegotchi NFTs can be donated to the FrAactionHub with a simple ERC721 transfer"
         );
         ERC721Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id);
-        if (!ownedErc721[_tokenAddress][_id]) {
+        if (ownedErc721[_tokenAddress][_id] == 0) {
             totalNumberExtAssets++;
             Nft memory newNft = Nft(_tokenAddress, _id);
             nfts.push(newNft);
+            nftsIndex[_tokenAddress] = nfts.length - 1;
         }
         ownedNfts[_tokenAddress][_id] = true;
         emit DonatedExtNft(_tokenAddress, _id);
@@ -295,6 +299,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalNumberExtAssets++;
             Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
             erc1155Tokens.push(newErc1155);
+            erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
         }
         ownedErc1155[_tokenAddress][_id] += _value;
         emit DonatedExtErc1155(_tokenAddress, _id, _value);
@@ -322,9 +327,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 balance >= ownedErc20[_tokenAddress],
                 "acknowledgeFungibleTokens: insufficient ERC20 token balance"
             );
-            if (!ownedErc20[_tokenAddress]) {
+            if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
                 totalNumberExtAssets++;
                 erc20Tokens.push(_tokenAddress);
+                erc20Index[_tokenAddress] = erc20tokens.length - 1;
             }
             value = balance - ownedErc20[_tokenAddress]
             ownedErc20[_tokenAddress] += value;
@@ -346,6 +352,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalNumberExtAssets++;
             Nft memory newNft = Nft(_tokenAddress, _id);
             nfts.push(newNft);
+            nftsIndex[_tokenAddress] = nfts.length - 1;
         }
         ownedNfts[_tokenAddress][_id] = true;
         emit AcknowledgedExtNft(_tokenAddress, _id);
@@ -365,6 +372,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             totalNumberExtAssets++;
             Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
             erc1155Tokens.push(newErc1155);
+            erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
         }
         ownedErc1155[_tokenAddress][_id] += _value;
         emit AcknwoledgedExtErc1155(_tokenAddress, _id, _value);
@@ -2019,6 +2027,22 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     // ============ Internal: ConvertTreasuryTokens ====================
 
+    function wrapMaticIntoWmatic(uint256 _amount) internal {
+        require(
+            totalTreasuryInMatic >= _amount,
+            "wrapMaticIntoWmatic: not enough Matic or wrong path parameter"
+        );
+        WrappedMaticInterface(wrappedMaticContract).deposit{value: _amount}();
+    }
+
+    function unwrapWmatic(uint256 _amount) internal {
+        require(
+            totalTreasuryInMatic >= _amount,
+            "convertMaticIntoWmatic: not enough Matic or wrong path parameter"
+        );
+        WrappedMaticInterface(wrappedMaticContract).withdraw(_amount);
+    }
+
     function convertTreasuryTokens(uint256 _amount, address[] _path) internal {
         require(
             _amount > 0 &&
@@ -2035,7 +2059,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 "convertTreasuryTokens: not enough Matic or wrong path parameter"
             );
             uint256 initialGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(amountOut[2], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(
+                amountOut[2], 
+                _path, 
+                address(this), 
+                block.timestamp
+            );
             uint256 postGhstBal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
             tokenDelta = postGhstBal - initialGhstBal;
             require(
@@ -2044,7 +2073,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             );
             totalTreasuryInMatic -= _amount;
             currentBalanceInMatic -= _amount;
-            totalContributedToFraactionHubInGhst += tokenDelta;
+            totalTreasuryInGhst += tokenDelta;
             currentBalanceInGhst += tokenDelta;
         } else {
             require(
@@ -2054,7 +2083,13 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             );
             uint256 initialMaticBal = address(this).balance;
             IERC20Upgradeable(ghstContract).approve(quickSwapRouterContract, _amount);
-            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount, amountOut[2], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(
+                _amount, 
+                amountOut[2], 
+                _path, 
+                address(this), 
+                block.timestamp
+            );
             uint256 postMaticBal = address(this).balance;
             tokenDelta = postMaticBal - initialMaticBal;
             require(
@@ -2063,7 +2098,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             );
             totalTreasuryInGhst -= _amount;
             currentBalanceInGhst -= _amount;
-            totalContributedToFraactionHubInMatic += tokenDelta;
+            totalTreasuryInMatic += tokenDelta;
             currentBalanceInMatic += tokenDelta;
         }
         emit ConvertedTreasuryTokens(_path[0], _amount, tokenDelta);
@@ -2076,7 +2111,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         require(
             _path[0] != ghstContract &&
-            _path[length - 1] != ghstContract,
+            _path[_path.length - 1] != ghstContract,
             "convertTokens: use convertTreasuryTokens() with GHST input or output"
         );
         uint256 tokenDelta;
@@ -2087,7 +2122,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 totalTreasuryInMatic >= _amount,
                 "convertTokens: not enough Matic or wrong path parameter"
             );
-            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(amountOut[length - 1], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactETHForTokensSupportingFeeOnTransferTokens{value: _amount}(
+                amountOut[amountOut.length - 1], 
+                _path, 
+                address(this), 
+                block.timestamp
+            );
             totalTreasuryInMatic -= _amount;
             currentBalanceInMatic -= _amount;
         } else if (_unwrappedMatic == 2) {
@@ -2095,22 +2135,429 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 _path[2] == wrappedMaticContract,
                 "convertTokens: last path value must be WMATIC"
             );
+            require(
+                ownedErc20[_path[0]] >= _amount,
+                "convertTokens: not enough token balance"
+            );
             IERC20Upgradeable(_path[0]).approve(quickSwapRouterContract, _amount);
             uint256 initialMaticBal = address(this).balance;
-            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount, amountOut[length - 1], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForETHSupportingFeeOnTransferTokens(
+                _amount, 
+                amountOut[amountOut.length - 1], 
+                _path, 
+                address(this), 
+                block.timestamp
+            );
+            ownedErc20[_path[0]] -= _amount;
             uint256 postMaticBal = address(this).balance;
             tokenDelta = postMaticBal - initialMaticBal;
             require(
                 tokenDelta > 0,
                 "convertTokens: MATIC balance has to increase"
             );
-            totalContributedToFraactionHubInMatic += tokenDelta;
+            totalTreasuryInMatic += tokenDelta;
             currentBalanceInMatic += tokenDelta;
         } else {
+            require(
+                ownedErc20[_path[0]] >= _amount,
+                "convertTokens: not enough token balance"
+            );
+            uint256 initialTokenBal = IERC20Upgradeable(_path[_path.length - 1]).balanceOf(address(this));
             IERC20Upgradeable(_path[0]).approve(quickSwapRouterContract, _amount);
-            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount, amountOut[length - 1], _path, address(this), block.timestamp);
+            QuickSwapInterface(quickSwapRouterContract).swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                _amount, 
+                amountOut[amountOut.length - 1],
+                _path, 
+                address(this), 
+                block.timestamp
+            );
+            uint256 postTokenBal = IERC20Upgradeable(_path[_path.length - 1]).balanceOf(address(this));
+            tokenDelta = postTokenBal - initialTokenBal;
+            ownedErc20[_path[0]] -= _amount;
+            ownedErc20[_path[_path.length - 1]] += tokenDelta;
         }
         emit ConvertedTokens(_unwrappedMatic, _amount, tokenDelta);
+    }
+
+    function addLiquidity(address _tokenA, address _tokenB, uint _amountADesired, uint _amountBDesired, uint _maxSlippage) internal {
+        require(
+            _amountADesired > 0 && _amountBDesired > 0,
+            "addLiquidity: amount desired mut be strictly positive"
+        );
+        address pair = QuickSwapInterface(quickSwapFactoryContract).getPair(_tokenA, _tokenB);
+        (uint256 reserveTokenA, uint256 reserveTokenB, ) = QuickSwapInterface(pair).getReserves();
+        uint256 amountBOptimized = QuickSwapInterface(quickSwapRouterContract).quote(_tokenA, reserveTokenA, reserveTokenB);
+        uint256 minAmountTokensA = _maxSlippage / 1000 * _tokenA;
+        uint256 minAmountTokensB = _maxSlippage / 1000 * amountBOptimized;
+        if (_tokenA == ghstContract) {
+            require(
+                totalTreasuryInGhst >= _amountADesired,
+                "addLiquidity: not enough GHST"
+            );
+        } else {
+            require(
+                ownedErc20[_tokenA] >= _amountADesired,
+                "addLiquidity: not enough Token A"
+            );
+        }
+        if (_tokenB == ghstContract) {
+            require(
+                totalTreasuryInGhst >= amountBOptimized,
+                "addLiquidity: not enough GHST "
+            );
+        } else {
+            require(
+                ownedErc20[_tokenB] >= amountBOptimized,
+                "addLiquidity: not enough Token B"
+            );
+        }
+        IERC20Upgradeable(_tokenA).approve(quickSwapRouterContract, _amountADesired);
+        IERC20Upgradeable(_tokenB).approve(quickSwapRouterContract, amountBOptimized);
+        (uint256 amountTokenA, uint256 amountTokenB, uint256 liquidityToken) = 
+            QuickSwapInterface(quickSwapRouterContract).addLiquidity(
+                _tokenA, 
+                _tokenB, 
+                _amountADesired, 
+                amountBOptimized, 
+                minAmountTokensA, 
+                minAmountTokensB,
+                address(this),
+                block.timestamp
+            );
+        if (_tokenA == ghstContract) {
+            totalTreasuryInGhst -= amountTokenA;
+            currentBalanceInGhst -= amountTokenA;
+        } else if (_tokenB == ghstContract) {
+            totalTreasuryInGhst -= amountTokenB;
+            currentBalanceInGhst -= amountTokenB;
+        }
+        if (ownedErc20[pair] == 0 && erc20Index[pair] == 0) {
+            totalNumberExtAssets++;
+            erc20tokens.push(pair);
+            erc20Index[pair] = erc20Tokens.length - 1;
+        }
+        ownedErc20[pair] += liquidityToken;
+        staked[_tokenA] += amountTokenA;
+        staked[_tokenB] += amountTokenB;
+        ownedErc20[_tokenA] -= amountTokenA;
+        ownedErc20[_tokenB] -= amountTokenB;
+        emit AddedLiquidity(_tokenA, _tokenB, amountTokenA, amountTokenB, liquidityToken);
+    }
+
+    function addETHLiquidity(address _token, address _maticAmount, uint _amountDesired, uint _amountMaticDesired, uint _maxSlippage) internal {
+        require(
+            _amountDesired > 0 && _amountMaticDesired > 0,
+            "addETHLiquidity: amount desired mut be strictly positive"
+        );
+        address pair = QuickSwapInterface(quickSwapFactoryContract).getPair(_tokenA, wrappedMaticContract);
+        (uint256 reserveToken, uint256 reserveWmatic, ) = QuickSwapInterface(pair).getReserves();
+        uint256 amountWmaticOptimized = QuickSwapInterface(quickSwapRouterContract).quote(_tokenA, reserveToken, reserveWmatic);
+        uint256 minAmountTokens = _maxSlippage / 1000 * _token;
+        uint256 minAmountWmatic = _maxSlippage / 1000 * amountWmaticOptimized;
+        if (_token == ghstContract) {
+            require(
+                totalTreasuryInGhst >= _amountDesired,
+                "addETHLiquidity: not enough GHST"
+            );
+        } else {
+            require(
+                ownedErc20[_token] >= _amountDesired,
+                "addETHLiquidity: not enough Token"
+            );
+        }
+        require(
+            totalTreasuryInMatic >= amountWmaticOptimized,
+            "addETHLiquidity: not enough MATIC"
+        );
+        IERC20Upgradeable(_token).approve(quickSwapRouterContract, _amountDesired);
+        (uint256 amountToken, uint256 amountMatic, uint256 liquidityToken) = 
+            QuickSwapInterface(quickSwapRouterContract).addLiquidityETH{value: amountWmaticOptimized}(
+                _token,  
+                _amountDesired, 
+                minAmountTokens, 
+                minAmountWmatic,
+                address(this),
+                block.timestamp
+            );
+        if (_token == ghstContract) {
+            totalTreasuryInGhst -= amountToken;
+            currentBalanceInGhst -= amountToken;
+        }
+        totalTreasuryInGhst -= amountMatic;
+        currentBalanceInGhst -= amountMatic;
+        if (ownedErc20[pair] == 0) {
+            totalNumberExtAssets++;
+            erc20tokens.push(pair);
+            erc20Index[pair] = erc20Tokens.length - 1;
+        }
+        staked[_token] += amountToken;
+        ownedErc20[_token] -= amountToken;
+        ownedErc20[pair] += liquidityToken;
+        emit AddedETHLiquidity(_token, amountToken, amountMatic, liquidityToken);
+    }    
+
+    function removeLiquidity(
+        address _tokenA, 
+        address _tokenB, 
+        uint _liquidity, 
+        uint _maxSlippage
+    ) internal {
+        require(
+            _liquidity > 0,
+            "removeLiquidity: liquidity must be strictly positive"
+        );
+        address pair = QuickSwapInterface(quickSwapFactoryContract).getPair(_tokenA, _tokenB);
+        require(
+            ownedErc20[pair] >= _liquidity,
+            "removeLiquidity: not enough Token"
+        );
+        uint256 balance = IERC20Upgradeable(pair).balanceOf(address(this));
+        (uint256 reserveTokenA, uint256 reserveTokenB, ) = QuickSwapInterface(pair).getReserves();
+        uint256 supply = IERC20Upgradeable(pair).totalSupply();
+        uint256 desiredTokenA = (_liquidity * reserveTokenA) / supply;
+        uint256 desiredTokenB = (_liquidity * reserveTokenB) / supply;
+        uint256 amountAMin = desiredTokenA * (_maxSlippage / 1000);
+        uint256 amountBMin = desiredTokenB * (_maxSlippage / 1000);
+        (uint256 amountTokenA, uint256 amountTokenB) = 
+            QuickSwapInterface(quickSwapRouterContract).removeLiquidity(
+                _tokenA,
+                _tokenB,
+                _liquidity,
+                amountAMin,
+                amountBMin,
+                address(this);
+                block.timestamp
+            );
+        if (_liquidity / balance == 1) {
+            erc20tokens[erc20Index[pair]] = erc20tokens[erc20tokens.length - 1];
+            erc20Index[erc20tokens.length - 1] = erc20Index[pair];
+            delete erc20Index[pair];
+            erc20tokens.pop();
+        }
+        staked[_tokenA] -= staked[_tokenA] * (_liquidity / balance);
+        staked[_tokenB] -= staked[_tokenB] * (_liquidity / balance);
+        ownedErc20[_tokenA] += amountTokenA;
+        ownedErc20[_tokenB] += amountTokenB;
+        emit RemovedLiquidity(_tokenA, _tokenB, _liquidity, amountTokenA, amountTokenB);
+    }
+
+    function removeLiquidityETH(
+        address _token,  
+        uint _liquidity, 
+        uint _maxSlippage
+    ) internal {
+        address pair = QuickSwapInterface(quickSwapFactoryContract).getPair(_tokenA, wrappedMaticContract);
+        require(
+            _liquidity > 0,
+            "removeLiquidityETH: liquidity must be strictly positive"
+        );
+        require(
+            ownedErc20[pair] >= _liquidity,
+            "removeLiquidityETH: not enough Token"
+        );
+        uint256 balance = IERC20Upgradeable(pair).balanceOf(address(this));
+        (uint256 reserveToken, uint256 reserveWmatic, ) = QuickSwapInterface(pair).getReserves();
+        uint256 supply = IERC20Upgradeable(pair).totalSupply();
+        uint256 desiredToken = (_liquidity * reserveToken) / supply;
+        uint256 desiredMatic = (_liquidity * reserveWmatic) / supply;
+        uint256 amountMin = desiredToken * (_maxSlippage / 1000);
+        uint256 amountMaticMin = desiredWmatic * (_maxSlippage / 1000);
+        (uint256 amountToken, uint256 amountMatic) = 
+            QuickSwapInterface(quickSwapRouterContract).removeLiquidityETHSupportingFeeOnTransferTokens(
+                _token,
+                _liquidity,
+                amountMin,
+                amountMaticMin,
+                address(this);
+                block.timestamp
+            );
+        if (_liquidity / balance == 1) {
+            erc20tokens[erc20Index[pair]] = erc20tokens[erc20tokens.length - 1];
+            erc20Index[erc20tokens.length - 1] = erc20Index[pair];
+            delete erc20Index[pair];
+            erc20tokens.pop();
+        }
+        staked[_token] -= staked[_token] * (_liquidity / balance);
+        ownedErc20[_tokenA] += amountToken;
+        totalTreasuryInMatic += amountMatic;
+        currentBalanceInMatic += amountMatic;
+        emit RemovedLiquidity(_token, _tokenB, _liquidity, amountTokenA, amountTokenB);
+    }
+
+    function supply(address _asset, uint256 _amount) internal {
+        require(
+            ownedErc20[_asset] >= _amount,
+            "supply: not enough Token"
+        );
+        require(
+            _amount > 0,
+            "supply: amount must be strictly positive"
+        );
+        require(
+            _asset != address(0),
+            "supply: asset address cannot be null"
+        );
+        AaveInterface(aavePoolContract).supply(
+            _asset,
+            _amount,
+            address(this),
+            0
+        );
+        ownedErc20[_asset] -= _amount;
+        (address aTokenAddress,,) = AaveInterface(aaveProtocolDataProviderContract).getReserveTokensAddresses(_asset);
+        if (ownedErc20[aTokenAddress] == 0) {
+            totalNumberExtAssets++;
+            erc20tokens.push(aTokenAddress);
+            erc20Index[aTokenAddress] = erc20Tokens.length - 1;
+        }
+        if (assetToATokenAddress[_asset] == address(0)) assetToATokenAddress[_asset] = aTokenAddress;
+        ownedErc20[aTokenAddress] += _amount;
+        emit Supplied(_asset, _amount, aTokenAddress);
+    }
+
+    function withdraw(address _asset, uint256 _amount) internal {
+        require(
+            _amount > 0,
+            "withdraw: amount must be strictly positive"
+        );
+        require(
+            _asset != address(0),
+            "withdraw: asset address cannot be null"
+        );
+        (address aTokenAddress,,) = AaveInterface(aaveProtocolDataProviderContract).getReserveTokensAddresses(_asset);
+        require(
+            aTokens[aTokenAddress] >= _amount,
+            "withdraw: not enough aToken"
+        );
+        uint256 tokenDelta;
+        uint256 initialTokenBal = IERC20Upgradeable(_asset).balanceOf(address(this));
+        AaveInterface(aavePoolContract).withdraw(
+            _asset,
+            _amount,
+            address(this)
+        );
+        uint256 postTokenBal = IERC20Upgradeable(_asset).balanceOf(address(this));
+        tokenDelta = postTokenBal - initialTokenBal;
+        ownedErc20[_asset] += tokenDelta;
+        ownedErc20[aTokenAddress] -= _amount;
+        if (ownedErc20[aTokenAddress] == 0) {
+            erc20tokens[erc20Index[aTokenAddress]] = erc20tokens[erc20tokens.length - 1];
+            erc20Index[erc20tokens.length - 1] = erc20Index[aTokenAddress];
+            delete erc20Index[aTokenAddress];
+            erc20tokens.pop();
+        }
+        emit Withdrawn(_asset, _amount, aTokenAddress, tokenDelta);
+    }
+
+    function borrow(address _asset, uint256 _amount, uint256 _interestMode) internal {
+        require(
+            _amount > 0,
+            "borrow: amount must be strictly positive"
+        );
+        require(
+            _asset != address(0),
+            "borrow: asset address cannot be null"
+        );
+        require(
+            _interestMode == 1 || _interestMode == 2,
+            "borrow: interest mode has to be stable or variable (1 or 2 as input)"
+        );
+        AaveInterface(aavePoolContract).borrow(
+            _asset,
+            _amount,
+            _interestMode,
+            0,
+            address(this)
+        );
+        if (ownedErc20[_asset] == 0 && erc20Index[_asset] == 0) {
+            totalNumberExtAssets++;
+            erc20tokens.push(_asset);
+            erc20Index[_asset] = erc20Tokens.length - 1;
+        }
+        ownedErc20[_asset] += _amount;
+        emit Borrowed(_asset, _amount, _interestMode);
+    }
+
+    function repay(address _asset, uint256 _amount, uint256 _interestMode) internal {
+        require(
+            _amount > 0,
+            "repay: amount must be strictly positive"
+        );
+        require(
+            _asset != address(0),
+            "repay: asset address cannot be null"
+        );
+        require(
+            _interestMode == 1 || _interestMode == 2,
+            "repay: interest mode has to be stable or variable (1 or 2 as input)"
+        );
+        AaveInterface(aavePoolContract).repay(
+            _asset,
+            _amount,
+            _interestMode,
+            address(this)
+        );
+        ownedErc20[_asset] -= _amount;
+        if (ownedErc20[_asset] == 0 && erc20Index[_asset] == 0) {
+            erc20tokens[erc20Index[_asset]] = erc20tokens[erc20tokens.length - 1];
+            erc20Index[erc20tokens.length - 1] = erc20Index[_asset];
+            delete erc20Index[_asset];
+            erc20tokens.pop();
+        }
+        emit Repaid(_asset, _amount, _interestMode);
+    }
+
+    function repayWithATokens(address _asset, uint256 _amount, uint256 _interestMode) internal {
+        require(
+            _amount > 0,
+            "repayWithATokens: amount must be strictly positive"
+        );
+        require(
+            _asset != address(0),
+            "repayWithATokens: asset address cannot be null"
+        );
+        require(
+            _interestMode == 1 || _interestMode == 2,
+            "repayWithATokens: interest mode has to be stable or variable (1 or 2 as input)"
+        );
+        AaveInterface(aavePoolContract).repayWithATokens(
+            _asset,
+            _amount,
+            _interestMode
+        );
+        ownedErc20[assetToATokenAddress[_asset]] -= _amount;
+        if (ownedErc20[_asset] == 0 && erc20Index[_asset] == 0) {
+            erc20tokens[erc20Index[_asset]] = erc20tokens[erc20tokens.length - 1];
+            erc20Index[erc20tokens.length - 1] = erc20Index[_asset];
+            delete erc20Index[_asset];
+            erc20tokens.pop();
+        }
+        emit RepaidWithATokens(_asset, _amount, _interestMode);
+    }
+
+    function swapBorrowRateMode(address _asset, uint256 _interestMode) internal {
+        require(
+            _asset != address(0),
+            "swapBorrowRateMode: asset address cannot be null"
+        );
+        require(
+            _interestMode == 1 || _interestMode == 2,
+            "swapBorrowRateMode: interest mode has to be stable or variable (1 or 2 as input)"
+        );
+        AaveInterface(aavePoolContract).swapBorrowRateMode(
+            _asset,
+            _interestMode
+        );
+        emit SwappedBorrowRateMode(_asset, _interestMode);
+    }
+
+    function setUserUseReserveAsCollateral(address _asset, bool _useAsCollateral) internal {
+        require(
+            _asset != address(0),
+            "setUserUseReserveAsCollateral: asset address cannot be null"
+        );
+        AaveInterface(aavePoolContract).setUserUseReserveAsCollateral(_asset,_useAsCollateral);
+        emit SetUserUseReserveAsCollateral(_asset, _useAsCollateral);
     }
 
     // ============ Internal: TransferMaticOrWmatic ============
@@ -2135,8 +2582,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         // Try to transfer MATIC to the given recipient.
         if (!maticTransfer(_to, _value)) {
             // If the transfer fails, wrap and send as WMATIC
-            wrappedMaticContract.deposit{value: _value}();
-            wrappedMaticContract.transfer(_to, _value);
+            WrappedMaticInterface(wrappedMaticContract).deposit{value: _value}();
+            WrappedMaticInterface(wrappedMaticContract).transfer(_to, _value);
             // At this point, the recipient can unwrap WMATIC.
         }
     }
