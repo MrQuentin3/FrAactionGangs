@@ -31,6 +31,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         address tokenAddress;
         uint256 tokenId;
         uint256 category;
+        uint256 gotchiCategory;
         uint256 quantity;
         uint256 priceInWei;
         uint256 listingEnd;
@@ -38,27 +39,14 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         uint256[] childTokensQuantity;
     }
 
-    struct FraactionToken {
-        bool active;
-        bool forSale;
-        bool inGhst;
-        bool isHub;
-        address author;
-        address tokenAddress;
-        uint256 hubId;
-        uint256 quantity;
-        uint256 priceInWei;
-        uint256 listingEnd;
-    }
-
     address diamondContract = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
     address settingsContract = ;
     mapping(uint256 => Token) public token;
     mapping(uint256 => FraactionToken) public fraactionToken;
     mapping(uint256 => bool) public sellingNfts;
-    mapping(uint256 => uint256) public sellingItems;
+    mapping(uint256 => uint256) public sellingFungible;
     mapping(uint256 => bool) public buyingNfts;
-    mapping(uint256 => uint256) public buyingItems;
+    mapping(uint256 => uint256) public buyingFungible;
 
     // Category = 0: realms, 1: aavegotchi & portals, 2: items, 3: tickets, 4: non-Aavegotchi NFTs, 5: non-Aavegotchi ERC1155 tokens, 6: ERC20 tokens
     function addToken(
@@ -68,6 +56,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         uint256[] calldata _childTokensQuantity,
         uint256 _tokenId, 
         uint256 _category, 
+        uint256 _gotchiCategory,
         uint256 _quantity, 
         uint256 _numberOfDays, 
         uint256 _priceInWei,
@@ -87,57 +76,66 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             _numberOfDays > ISettings(settingsContract).minSaleLength(),
             "addToken: listing length has to be valid"
         );
-        tokenNumber++;
+        listingId++;
         if (_forSale) {
             if (_category == 0 || _category == 1 || _category == 4) {
                 require(DiamondInterface(_tokenAddress).ownerOf(_tokenId) == msg.sender,
                     "addToken: caller not owner of this nft"
                 );
                 sellingNfts[_tokenId] = true;
-            } else if (_category == 2 || _category == 3 || _category == 5) {
+            } else if (_category == 2 || _category == 3 || _category == 5 || _category == 6) {
                 require(DiamondInterface(_tokenAddress).balanceOf(msg.sender, _tokenId) == _quantity,
                     "addToken: caller not owner of this amount of this item type"
                 );
-                token[tokenNumber].quantity = _quantity;
-                sellingItems[_tokenId] += _quantity;
+                token[listingId].quantity = _quantity;
+                sellingFungible[_tokenId] += _quantity;
             }
-            token[tokenNumber].forSale = true;
+            token[listingId].forSale = true;
         } else {
             uint256 price;
             if (_category == 0 || _category == 1 || _category == 4) {
                 price = _priceInWei;
                 buyingNfts[_tokenId] = true;
             }
-            if (_category == 2 || _category == 3 || _category == 5) {
-                token[tokenNumber].quantity = _quantity;
+            if (_category == 2 || _category == 3 || _category == 5 || _category == 6) {
+                token[listingId].quantity = _quantity;
                 price = _quantity * _priceInWei;
-                buyingItems[_tokenId] += _quantity;
+                buyingFungible[_tokenId] += _quantity;
             }
-            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), price);
-            buyerFunding[msg.sender][tokenNumber] = price;
+            if (_inGhst) {
+                ERC20lib.transferFrom(ghstContract, msg.sender, address(this), price);
+            } else {
+                transferMaticOrWmatic(address(this), price);
+            }
+            buyerFunding[msg.sender][listingId] = price;
         }
-        if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) token[tokenNumber].isHub = true;
-        if (_inGhst) token[tokenNumber].inGhst = true;
-        token[tokenNumber].tokenId = _tokenId;
-        token[tokenNumber].active = true;
-        token[tokenNumber].author = msg.sender;
-        token[tokenNumber].tokenAddress = _tokenAddress;
-        token[tokenNumber].category = _category;
-        token[tokenNumber].priceInWei = _priceInWei;
-        token[tokenNumber].childTokensId = _childTokensId;
-        token[tokenNumber].childTokensQuantity = _childTokensQuantity;
-        token[tokenNumber].listingEnd = block.timestamp * days * _numberOfDays;
+        if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) token[listingId].isHub = true;
+        if (_inGhst) token[listingId].inGhst = true;
+        token[listingId].tokenId = _tokenId;
+        token[listingId].active = true;
+        token[listingId].author = msg.sender;
+        token[listingId].tokenAddress = _tokenAddress;
+        token[listingId].category = _category;
+        token[listingId].gotchiCategory = _category;
+        token[listingId].priceInWei = _priceInWei;
+        token[listingId].childTokensId = _childTokensId;
+        token[listingId].childTokensQuantity = _childTokensQuantity;
+        token[listingId].listingEnd = block.timestamp * days * _numberOfDays;
         emit TokenAdded(msg.sender, _forSale, _tokenId, _category, tokenNumber);
     }
 
-    function removeToken(uint256 _tokenNumber) external {
-        Token memory params = token[_tokenNumber];
+    function removeToken(uint256 _listingId) external {
+        Token memory params = token[_listingId];
         require(
             msg.sender == params.author,
             "removeToken: not the owner of the listed token"
         );
         if (!params.forSale) {
-            ERC20lib.transferFrom(ghstContract, address(this), msg.sender, buyerFunding[msg.sender][_tokenNumber]);
+            if (params.inGhst) {
+                ERC20lib.transferFrom(ghstContract, address(this), msg.sender, buyerFunding[msg.sender][_listingId]);
+            } else {
+                transferMaticOrWmatic(msg.sender, buyerFunding[msg.sender][_listingId]);
+            }
         }
         if (params.category == 0 || params.category == 1 || params.category == 4) {
             if (params.forSale) {
@@ -145,19 +143,19 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             } else {
                 delete buyingNfts[params.tokenId];
             }
-        } else if (params.category == 2 || params.category == 3 || params.category == 5) {
+        } else if (params.category == 2 || params.category == 3 || params.category == 5 || _category == 6) {
             if (params.forSale) {
-                sellingItems[params.tokenId] -= params.quantity;
+                sellingFungible[params.tokenId] -= params.quantity;
             } else {
-                buyingItems[params.tokenId] -= params.quantity;
+                buyingFungible[params.tokenId] -= params.quantity;
             }
         }
-        delete token[_tokenNumber];
-        emit TokenRemoved(msg.sender, _tokenNumber);
+        delete token[_listingId];
+        emit TokenRemoved(msg.sender, _listingId);
     }
 
-    function executeTokenTransaction(uint256 _tokenNumber) external payable nonReentrant {
-        Token memory params = token[_tokenNumber];
+    function executeTokenTransaction(uint256 _listingId) external nonReentrant {
+        Token memory params = token[_listingId];
         require(
             block.timestamp < params.listingEnd,
             "executeTokenTransaction: listing expired"
@@ -191,7 +189,11 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             );
             price = params.tokenId * params.quantity;
         }
-        ERC20lib.transferFrom(ghstContract, buyer, seller, price);
+        if (params.inGhst) {
+            ERC20lib.transferFrom(ghstContract, buyer, seller, price);
+        } else {
+            transferMaticOrWmatic(seller, price);
+        }
         if (!params.forSale) buyer = params.author;
         if (params.category == 0 || params.category == 1 || params.category == 4) {
             IERC721Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, tokenParams.tokenId);
@@ -200,68 +202,15 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             } else {
                 delete buyingNfts[params.tokenId];
             }
-        } else (params.category == 2 || params.category == 3 || params.category == 5) {
-            IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity,);
+        } else (params.category == 2 || params.category == 3 || params.category == 5 || params.category == 6) {
+            if (params.category != 6) IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity, new bytes(0));
+            if (params.category == 6) libERC20.transferFrom.transferFrom(params.tokenAddress, seller, buyer, params.quantity);
             if (params.forSale) {
-                sellingItems[params.tokenId] -= params.quantity;
+                sellingFungible[params.tokenId] -= params.quantity;
             } else {
-                buyingItems[params.tokenId] -= params.quantity;
+                buyingFungible[params.tokenId] -= params.quantity;
             }
-        }
+        } 
         params.active = false;
-        emit ExecutedTransaction(buyer, seller, _saleNumber, price);
+        emit ExecutedTransaction(buyer, seller, _listingId, price);
     }
-
-    function addFraactionToken(
-        address _tokenAddress, 
-        uint256 _hubId, 
-        uint256 _value, 
-        uint256 _priceInWei, 
-        uint256 _numberOfDays,  
-        bool _inGhst
-    ) external nonReentrant {
-        require(
-            _hubId != 0,
-            "addFraactionToken: hubId ID has to be valid"
-        );
-        require(
-            _value > 0,
-            "addFraactionToken: quantity has to be superior to zero"
-        );
-        require(
-            _numberOfDays > ISettings(settingsContract).minSaleLength(),
-            "addFraactionToken: token ID has to be valid"
-        );
-        fraactionTokenNumber++;
-        if (_forSale) {
-            require(IERC20Upgradeable(_tokenAddress).balanceOf(msg.sender) >= _value
-                "addFraactionToken: caller not owner of this nft"
-            );
-            fraactionToken[fraactionTokenNumber].value = _value;
-            fraactionToken[fraactionTokenNumber].forSale = true;
-        } else {
-            uint256 price = _value * _priceInWei;
-            if ()
-            ERC20lib.transferFrom(ghstContract, msg.sender, address(this), price);
-            buyerFunding[msg.sender][fraactionTokenNumber] = price;
-        }
-        if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) fraactionToken[fraactionTokenNumber].isHub = true;
-        if (_inGhst) fraactionToken[fraactionTokenNumber].inGhst = true;
-        fraactionToken[fraactionTokenNumber].hubId = _hubId;
-        fraactionToken[fraactionTokenNumber].active = true;
-        fraactionToken[fraactionTokenNumber].author = msg.sender;
-        fraactionToken[fraactionTokenNumber].tokenAddress = _tokenAddress;
-        fraactionToken[fraactionTokenNumber].priceInWei = _priceInWei;
-        fraactionToken[fraactionTokenNumber].listingEnd = block.timestamp * days * _numberOfDays;
-        emit FraactionTokenAdded(msg.sender, _forSale, _tokenId, _category, fraactionTokenNumber);
-    }
-}
-
-
-
-require(
-            _erc721TokenAddress == address(this) ||
-                erc721Token.isApprovedForAll(owner, address(this)) ||
-                erc721Token.getApproved(_erc721TokenId) == address(this),
-            "ERC721Marketplace: Not approved for transfer"
-        );
