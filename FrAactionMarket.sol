@@ -48,7 +48,7 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
     mapping(uint256 => bool) public buyingNfts;
     mapping(uint256 => uint256) public buyingFungible;
 
-    // Category = 0: realms, 1: aavegotchi & portals, 2: items, 3: tickets, 4: non-Aavegotchi NFTs, 5: non-Aavegotchi ERC1155 tokens, 6: ERC20 tokens
+    // Category = 0: realms, 1: aavegotchi, 2: closed portals, 3: open portals, 4: items, 5: tickets, 6: non-Aavegotchi NFTs, 7: non-Aavegotchi ERC1155 tokens, 8: ERC20 tokens
     function addToken(
         bool _forSale, 
         bool _inGhst,
@@ -56,13 +56,12 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
         uint256[] calldata _childTokensQuantity,
         uint256 _tokenId, 
         uint256 _category, 
-        uint256 _gotchiCategory,
         uint256 _quantity, 
         uint256 _numberOfDays, 
         uint256 _priceInWei,
         address _tokenAddress
     ) external payable nonReentrant {
-        if (_category == 2 || _category == 3 || _category == 5) {
+        if (_category == 4 || _category == 5 || _category == 7 || _category == 8) {
             require(
                 _quantity > 0,
                 "addToken: quantity has to be superior to zero"
@@ -76,86 +75,114 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             _numberOfDays > ISettings(settingsContract).minSaleLength(),
             "addToken: listing length has to be valid"
         );
+        if (_category == 1 || _category == 2 || _category == 3) {
+            require(
+                DiamondInterface(diamondContract).getERC721Category(diamondContract, _tokenId) == _category,
+                "addToken: invalid gotchi category"
+            );
+        }
+        Token memory token;
         listingId++;
+        token.priceInWei = _priceInWei * (1000 + ISettings(settingsContract).buyerFee()) / 1000;
+        token.quantity = _quantity;
         if (_forSale) {
-            if (_category == 0 || _category == 1 || _category == 4) {
-                require(DiamondInterface(_tokenAddress).ownerOf(_tokenId) == msg.sender,
-                    "addToken: caller not owner of this nft"
-                );
-                sellingNfts[_tokenId] = true;
-            } else if (_category == 2 || _category == 3 || _category == 5 || _category == 6) {
-                require(DiamondInterface(_tokenAddress).balanceOf(msg.sender, _tokenId) == _quantity,
-                    "addToken: caller not owner of this amount of this item type"
-                );
-                token[listingId].quantity = _quantity;
-                sellingFungible[_tokenId] += _quantity;
+            if (_category == 1) {
+                for (uint i = 0; i < params.childTokensId.length; i++) {
+                    require(DiamondInterface(diamondContract).balanceOfToken(diamondContract, params.tokenId, params.childTokensId[i]) == params.childTokensQuantity[i],
+                        "addToken: NFT not owner of this child token"
+                    );
+                }
+            } else if (_category == 0 || _category == 2 || _category == 3 || _category == 6) {
+                IERC721Upgradeable(_tokenAddress).safeTransferFrom(msg.sender, address(this), _tokenId);
+            } else if (_category == 8) {
+                libERC20.transferFrom(_tokenAddress, msg.sender, address(this), _quantity);
+            } else if (_category == 4 || _category == 5 || _category == 7) {
+                IERC1155Upgradeable(_tokenAddress).safeTransferFrom(msg.sender, address(this), _quantity, new bytes(0));
             }
-            token[listingId].forSale = true;
+            token.forSale = true;
         } else {
             uint256 price;
-            if (_category == 0 || _category == 1 || _category == 4) {
+            if (_category == 0 || _category == 1 || _category == 2 || _category == 3 || _category == 6) {
                 price = _priceInWei;
-                buyingNfts[_tokenId] = true;
             }
-            if (_category == 2 || _category == 3 || _category == 5 || _category == 6) {
-                token[listingId].quantity = _quantity;
+            if (_category == 4 || _category == 5 || _category == 7 || _category == 8) {
                 price = _quantity * _priceInWei;
-                buyingFungible[_tokenId] += _quantity;
             }
             if (_inGhst) {
                 ERC20lib.transferFrom(ghstContract, msg.sender, address(this), price);
             } else {
                 transferMaticOrWmatic(address(this), price);
             }
-            buyerFunding[msg.sender][listingId] = price;
         }
-        if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) token[listingId].isHub = true;
-        if (_inGhst) token[listingId].inGhst = true;
-        token[listingId].tokenId = _tokenId;
-        token[listingId].active = true;
-        token[listingId].author = msg.sender;
-        token[listingId].tokenAddress = _tokenAddress;
-        token[listingId].category = _category;
-        token[listingId].gotchiCategory = _category;
-        token[listingId].priceInWei = _priceInWei;
-        token[listingId].childTokensId = _childTokensId;
-        token[listingId].childTokensQuantity = _childTokensQuantity;
-        token[listingId].listingEnd = block.timestamp * days * _numberOfDays;
-        emit TokenAdded(msg.sender, _forSale, _tokenId, _category, tokenNumber);
+        if (SettingsInterface(settingsContract).fraactionHubRegistry[msg.sender] != 0) token.isHub = true;
+        if (_inGhst) token.inGhst = true;
+        token.tokenId = _tokenId;
+        token.active = true;
+        token.author = msg.sender;
+        token.tokenAddress = _tokenAddress;
+        token.category = _category;
+        token.childTokensId = _childTokensId;
+        token.childTokensQuantity = _childTokensQuantity;
+        token.listingEnd = block.timestamp * 1 days * _numberOfDays;
+        activeListing.push(token);
+        listingIdToListingIndex[listingId] = activeListing.length - 1;
+        ownerActiveTx[msg.sender].push(listingId);
+        listingIdToOwnerIndex[listingId] = ownerActiveTx[msg.sender].length - 1;
+        activeCategoryListing[_category].push(listingId);
+        listingIdToCategoryIndex[listingId] = activeCategoryListing[_category].length - 1;
+        emit TokenAdded(msg.sender, listingId, _forSale, _category, _tokenAddress, _tokenId, _quantity);
     }
 
     function removeToken(uint256 _listingId) external {
-        Token memory params = token[_listingId];
+        uint256 tokenIndex = ownerActiveTx[msg.sender][listingIdToOwnerIndex[_listingId]]; 
+        Token memory params = activeListing[tokenIndex];
+        require(
+            params.active == true,
+            "removeToken: listingId not active"
+        );
         require(
             msg.sender == params.author,
             "removeToken: not the owner of the listed token"
         );
-        if (!params.forSale) {
+        uint256 price;
+        if (params.forSale) {
+            if (params.category == 0 || params.category == 2 || params.category == 3 || params.category == 6) {
+                IERC721Upgradeable(params.tokenAddress).safeTransferFrom(address(this), params.author, _tokenId);
+            } else if (params.category == 8) {
+                libERC20.transferFrom(params.tokenAddress, address(this), params.author, _quantity);
+            } else if (params.category == 4 || params.category == 5 || params.category == 7) {
+                IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(address(this), params.author, _quantity, new bytes(0));
+            }
+        } else {
+            if (params.category == 0 || params.category == 1 || params.category == 2 || params.category == 3 || params.category == 6) {
+                price = _priceInWei;
+            } else if (params.category == 4 || params.category == 5 || params.category == 7 || params.category == 8) {
+                price = _quantity * _priceInWei;
+            }
             if (params.inGhst) {
-                ERC20lib.transferFrom(ghstContract, address(this), msg.sender, buyerFunding[msg.sender][_listingId]);
+                ERC20lib.transferFrom(ghstContract, address(this), msg.sender, price);
             } else {
-                transferMaticOrWmatic(msg.sender, buyerFunding[msg.sender][_listingId]);
+                transferMaticOrWmatic(msg.sender, price);
             }
         }
-        if (params.category == 0 || params.category == 1 || params.category == 4) {
-            if (params.forSale) {
-                delete sellingNfts[params.tokenId];
-            } else {
-                delete buyingNfts[params.tokenId];
-            }
-        } else if (params.category == 2 || params.category == 3 || params.category == 5 || _category == 6) {
-            if (params.forSale) {
-                sellingFungible[params.tokenId] -= params.quantity;
-            } else {
-                buyingFungible[params.tokenId] -= params.quantity;
-            }
-        }
-        delete token[_listingId];
+        activeListing[listingIdToListingIndex[_listingId]] = activeListing[activeListing.length - 1];
+        listingIdToListingIndex[listingId] = listingIdToListingIndex[_listingId];
+        activeListing.pop();
+        ownerActiveTx[msg.sender][listingIdToOwnerIndex[_listingId]] = ownerActiveTx[msg.sender][ownerActiveTx.length - 1];
+        listingIdToOwnerIndex[ownerActiveTx[msg.sender][ownerActiveTx.length - 1]] = listingIdToOwnerIndex[_listingId];
+        ownerActiveTx.pop();
+        activeCategoryListing[params.category][listingIdToCategoryIndex[_listingId]] = activeCategoryListing[params.category][listingIdToCategoryIndex[activeCategoryListing.length - 1]];
+        listingIdToCategoryIndex[activeCategoryListing[params.category][listingIdToCategoryIndex[activeCategoryListing.length - 1]]] = listingIdToCategoryIndex[_listingId];
+        activeCategoryListing.pop();
+        delete listingIdToListingIndex[_listingId];
+        delete listingIdToOwnerIndex[_listingId];
+        delete listingIdToCategoryIndex[_listingId];
         emit TokenRemoved(msg.sender, _listingId);
     }
 
     function executeTokenTransaction(uint256 _listingId) external nonReentrant {
-        Token memory params = token[_listingId];
+        uint256 tokenIndex = ownerActiveTx[msg.sender][listingIdToOwnerIndex[_listingId]]; 
+        Token memory = activeListing[tokenIndex];
         require(
             block.timestamp < params.listingEnd,
             "executeTokenTransaction: listing expired"
@@ -174,43 +201,48 @@ contract FraactionMarket is ReentrancyGuardUpgradeable {
             buyer = address(this);
             for (uint i = 0; i < params.childTokensId.length; i++) {
                 require(DiamondInterface(diamondContract).balanceOfToken(diamondContract, params.tokenId, params.childTokensId[i]) == params.childTokensQuantity[i],
-                    "executeTokenTransaction: NFT not owner of this item"
+                    "executeTokenTransaction: NFT not owner of this child token"
                 );
             }
         }
         uint256 price;
-        if (params.category == 0 || params.category == 1 || params.category == 4) {
-            require(DiamondInterface(params.tokenAddress).ownerOf(params.tokenId) == seller,
-                "executeTokenTransaction: caller not owner of this nft"
-            );
-        } else if (params.category == 2 || params.category == 3 || params.category == 5) {
-            require(DiamondInterface(params.tokenAddress).balanceOf(seller, params.tokenId) == params.quantity,
-                "executeTokenTransaction: caller not owner of this amount of this item type"
-            );
-            price = params.tokenId * params.quantity;
+        if (params.category == 0 || params.category == 1 || params.category == 2 || params.category == 3 || params.category == 6) {
+            price = params.priceInWei;
+        } else if (params.category == 4 || params.category == 5 || params.category == 7 || params.category == 8) {
+            price = params.priceInWei * params.quantity;
         }
+        uint256 fee = ((ISettings(settingsContract).sellerFee() + ISettings(settingsContract).buyerFee())) / 1000 * price;
+        uint256 sellerProfit = price - fee;
         if (params.inGhst) {
-            ERC20lib.transferFrom(ghstContract, buyer, seller, price);
+            ERC20lib.transferFrom(ghstContract, buyer, fraactionDaoMultisig, fee);
+            ERC20lib.transferFrom(ghstContract, buyer, seller, sellerProfit);
         } else {
-            transferMaticOrWmatic(seller, price);
+            transferMaticOrWmatic(fraactionDaoMultisig, fee);
+            transferMaticOrWmatic(seller, sellerProfit);
         }
-        if (!params.forSale) buyer = params.author;
-        if (params.category == 0 || params.category == 1 || params.category == 4) {
+        if (params.forSale && params.category != 1) {
+            seller = address(this);
+        } else if (!params.forSale) {
+            buyer = params.author;
+        }
+        if (params.category == 0 || params.category == 1 || params.category == 2 || params.category == 3 || params.category == 6) {
             IERC721Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, tokenParams.tokenId);
-            if (params.forSale) {
-                delete sellingNfts[params.tokenId];
-            } else {
-                delete buyingNfts[params.tokenId];
-            }
-        } else (params.category == 2 || params.category == 3 || params.category == 5 || params.category == 6) {
-            if (params.category != 6) IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity, new bytes(0));
-            if (params.category == 6) libERC20.transferFrom.transferFrom(params.tokenAddress, seller, buyer, params.quantity);
-            if (params.forSale) {
-                sellingFungible[params.tokenId] -= params.quantity;
-            } else {
-                buyingFungible[params.tokenId] -= params.quantity;
-            }
+        } else (params.category == 4 || params.category == 5 || params.category == 7 || params.category == 8) {
+            if (params.category != 8) IERC1155Upgradeable(params.tokenAddress).safeTransferFrom(seller, buyer, params.tokenId, params.quantity, new bytes(0));
+            if (params.category == 8) libERC20.transferFrom(params.tokenAddress, seller, buyer, params.quantity);
         } 
-        params.active = false;
+        activeListing[listingIdToListingIndex[_listingId]] = activeListing[activeListing.length - 1];
+        listingIdToListingIndex[listingId] = listingIdToListingIndex[_listingId];
+        activeListing.pop();
+        ownerActiveTx[msg.sender][listingIdToOwnerIndex[_listingId]] = ownerActiveTx[msg.sender][ownerActiveTx.length - 1];
+        listingIdToOwnerIndex[ownerActiveTx[msg.sender][ownerActiveTx.length - 1]] = listingIdToOwnerIndex[_listingId];
+        ownerActiveTx.pop();
+        activeCategoryListing[params.category][listingIdToCategoryIndex[_listingId]] = activeCategoryListing[params.category][listingIdToCategoryIndex[activeCategoryListing.length - 1]];
+        listingIdToCategoryIndex[activeCategoryListing[params.category][listingIdToCategoryIndex[activeCategoryListing.length - 1]]] = listingIdToCategoryIndex[_listingId];
+        activeCategoryListing.pop();
+        delete listingIdToListingIndex[_listingId];
+        delete listingIdToOwnerIndex[_listingId];
+        delete listingIdToCategoryIndex[_listingId];
+        if (params.isHub) FraactionInterface(msg.sender).notifyTxFromMarket(params.tokenAddress, params.tokenId, sellerProfit);
         emit ExecutedTransaction(buyer, seller, _listingId, price);
     }

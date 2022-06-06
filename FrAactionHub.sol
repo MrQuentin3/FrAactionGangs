@@ -213,14 +213,13 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         string memory _name,
         string memory _symbol,
         address _demergeFrom
-        address _gangAddress;
     ) external initializer {
         // initialize ReentrancyGuard and ERC721Holder
         __ReentrancyGuard_init();
         __ERC721Holder_init();
         __ERC1155Holder_init();
         thisContract = address.this;
-        fraactionDaoMultisig = _fraactionDaoMultisig;
+        fraactionDaoMultisig = ;
         diamondContract = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
         ghstContract = 0x385eeac5cb85a38a9a07a70c73e0a3271cfb54a7;
         stakingContract = 0xA02d547512Bb90002807499F05495Fe9C4C3943f;
@@ -262,7 +261,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         } else {
             ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
             if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
-                totalNumberExtAssets++;
                 erc20tokens.push(_tokenAddress);
                 erc20Index[_tokenAddress] = erc20tokens.length - 1;
             }
@@ -279,7 +277,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         ERC721Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id);
         if (ownedErc721[_tokenAddress][_id] == 0) {
-            totalNumberExtAssets++;
             Nft memory newNft = Nft(_tokenAddress, _id);
             nfts.push(newNft);
             nftsIndex[_tokenAddress] = nfts.length - 1;
@@ -296,7 +293,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         ERC1155Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id, _value);
         if (ownedErc1155[_tokenAddress][_id] == 0) {
-            totalNumberExtAssets++;
             Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
             erc1155Tokens.push(newErc1155);
             erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
@@ -328,7 +324,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 "acknowledgeFungibleTokens: insufficient ERC20 token balance"
             );
             if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
-                totalNumberExtAssets++;
                 erc20Tokens.push(_tokenAddress);
                 erc20Index[_tokenAddress] = erc20tokens.length - 1;
             }
@@ -349,7 +344,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "acknowledgeExtNft: FrAactionHub not owner of this NFT"
         );
         if (!ownedErc721[_tokenAddress][_id]) {
-            totalNumberExtAssets++;
             Nft memory newNft = Nft(_tokenAddress, _id);
             nfts.push(newNft);
             nftsIndex[_tokenAddress] = nfts.length - 1;
@@ -369,7 +363,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             "acknowledgeExtErc1155: FrAactionHub not owner of this NFT"
         );
         if (ownedErc1155[_tokenAddress][_id] == 0) {
-            totalNumberExtAssets++;
             Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
             erc1155Tokens.push(newErc1155);
             erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
@@ -2232,7 +2225,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             currentBalanceInGhst -= amountTokenB;
         }
         if (ownedErc20[pair] == 0 && erc20Index[pair] == 0) {
-            totalNumberExtAssets++;
             erc20tokens.push(pair);
             erc20Index[pair] = erc20Tokens.length - 1;
         }
@@ -2286,7 +2278,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         totalTreasuryInGhst -= amountMatic;
         currentBalanceInGhst -= amountMatic;
         if (ownedErc20[pair] == 0) {
-            totalNumberExtAssets++;
             erc20tokens.push(pair);
             erc20Index[pair] = erc20Tokens.length - 1;
         }
@@ -2406,7 +2397,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         ownedErc20[_asset] -= _amount;
         (address aTokenAddress,,) = AaveInterface(aaveProtocolDataProviderContract).getReserveTokensAddresses(_asset);
         if (ownedErc20[aTokenAddress] == 0) {
-            totalNumberExtAssets++;
             erc20tokens.push(aTokenAddress);
             erc20Index[aTokenAddress] = erc20Tokens.length - 1;
         }
@@ -2470,7 +2460,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             address(this)
         );
         if (ownedErc20[_asset] == 0 && erc20Index[_asset] == 0) {
-            totalNumberExtAssets++;
             erc20tokens.push(_asset);
             erc20Index[_asset] = erc20Tokens.length - 1;
         }
