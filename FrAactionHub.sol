@@ -827,6 +827,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             }
             fundingStatus = quantity == (numberOfItems - initialNumberOfItems) ? FundingStatus.COMPLETED: FundingStatus.FAILED;
         }
+        contributedToFunding[fundingNumber] = totalContributedToFunding;
         uint256 fee;
         // if the repurchase was completed,
         if (fundingStatus == FundingStatus.COMPLETED) {
@@ -840,10 +841,11 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 transferMaticOrWmatic(fraactionDaoMultisig, fee);
                 totalContributedToFraactionHubInMatic += totalContributedToFunding;
             }
+            uint256 tokensToMint = valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]);
             if (firstRound == true) {
                 // mint fractional ERC-20 tokens
                 initializeVault(
-                    valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]), 
+                    tokensToMint, 
                     totalContributedToFunding, 
                     name, 
                     symbol
@@ -851,8 +853,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 if (fundingInGhst[fundingNumber]) exitInGhst = true;
                 firstRound = false;
             } else {
-                mint(address(this), valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]));
+                mint(address(this), tokensToMint);
             }
+            mintedTokens[fundingNumber] = tokensToMint;
         } else {
             fundingResult[fundingNumber] = 0;
         }
@@ -943,7 +946,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 fundingLength = fundingContributor[_contributor].length;
             }
             for (uint i = 0; i < fundingLength; i++) {
-                (uint256 tokenAmount, uint256 ghstorMaticAmount) = 
+                (uint256 tokenAmount, uint256 ghstOrMaticAmount) = 
                     calculateTokensOwed(
                         _contributor, 
                         fundingResult[fundingContributor[_contributor][i]], 
@@ -952,11 +955,11 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 // transfer tokens to contributor for their portion of GHST used
                 sumToken += tokenAmount;
                 // if the new funding deadline is reached or the repurchase failed then return all the GHST or MATIC to the contributor
-                if (ghstorMaticAmount > 0) {
+                if (ghstOrMaticAmount > 0) {
                     if (fundingInGhst[fundingContributor[_contributor][i]]) {
-                        sumGhst += ghstAmount;
+                        sumGhst += ghstOrMaticAmount;
                     } else {
-                        sumMatic += maticAmount;
+                        sumMatic += ghstOrMaticAmount;
                     }
                 }
             }
@@ -968,7 +971,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         if (sumToken > 0) _transferTokens(_contributor, sumToken);
         if (sumGhst > 0) {
             uint256 bal = IERC20Upgradeable(ghstContract).balanceOf(address(this));
-            if (sumGhst > ) sumGhst = bal;
+            if (sumGhst > bal) sumGhst = bal;
             ERC20lib.transfer(ghstContract, _contributor, sumGhst);
         }
         uint256 sum;
@@ -1013,7 +1016,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 } else {
                     mergerStatus == MergerStatus.INACTIVE;
                 }
-                emit FinalClaim (mergerStatus);
+                emit FinalClaim(mergerStatus);
             }
         }
     }
@@ -1029,14 +1032,10 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         demergerStatus = DemergerStatus.ASSETSTRANSFERRED;
         finalizeDemerger();
-        if (!takenover || split = 7) {
-            transferExternalErc20();
-            if (split == 0) {
-                delete proposedTakeoverFrom[target];
-                demergerStatus = DemergerStatus.INACTIVE;
-                mergerStatus == MergerStatus.INACTIVE;
-                emit Takenover(address(this));
-            }
+        if (split == 0) {
+            delete proposedTakeoverFrom[target];
+            mergerStatus == MergerStatus.INACTIVE;
+            emit Takenover(address(this));
         }
     }
 
@@ -1053,6 +1052,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             delete erc1155Tokens;
         } else {
             mergerStatus == MergerStatus.ENDED;
+            emit DeletedTokens(mergerStatus);
         }
     }
 
@@ -1234,6 +1234,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 FraactionInterface(auctionTarget).startFinalAuction{value: submittedBid}();
             }
         }
+        finalBidAmount[fundingNumber] = submittedBid;
         fundingStatus = FundingStatus.SUBMITTED;
         emit SubmitBid(submittedBid);
     }
@@ -1258,8 +1259,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         // if the purchase was completed,
         if (fundingStatus == FundingStatus.COMPLETED) {
             // transfer the fee to FrAactionDAO
-            submittedAmount[fundingNumber] = totalContributedToFunding;
-            fee = getFundingFee(submittedBid);
+            fee = getFundingFee(finalBidAmount[fundingNumber]);
             fundingResult[fundingNumber] = 1;
             if (fundingInGhst[fundingNumber]) {
                 ERC20lib.transfer(ghstContract, fraactionDaoMultisig, fee);
@@ -1268,10 +1268,11 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 transferMaticOrWmatic(fraactionDaoMultisig, fee);
                 totalContributedToFraactionHubInMatic += totalContributedToFunding;
             }
+            uint256 tokensToMint = valueToTokens(finalBidAmount[fundingNumber], fundingInGhst[fundingNumber]);
             if (firstRound == true) {
                 // mint fractional ERC-20 tokens
                 initializeVault(
-                    valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]), 
+                    tokensToMint, 
                     totalContributedToFunding, 
                     name, 
                     symbol
@@ -1279,8 +1280,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 firstRound = false;
                 if (fundingInGhst[fundingNumber]) exitInGhst = true;
             } else {
-                mint(address(this), valueToTokens(totalContributedToFunding, fundingInGhst[fundingNumber]));
+                mint(address(this), tokensToMint);
             }
+            mintedTokens[fundingNumber] = tokensToMint;
         } else {
             fundingResult[fundingNumber] = 0;
         }
@@ -1414,12 +1416,15 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         portalFundingStatus = DiamondInterface(diamondContract).getERC721Category(diamondContract, portalTarget) == 3 ? PortalFundingStatus.COMPLETED: PortalFundingStatus.FUNDING;
         uint256 _fee;
+        contributedToPortalFunding[portalFundingNumber] = totalContributedToPortalFunding;
         // if the Aavegotchi claim was completed,
         if (portalFundingStatus == PortalFundingStatus.COMPLETED) {
             // transfer the fee to FrAactionDAO
+            uint256 tokensToMint = valueToTokens(totalContributedToPortalFunding, 1);
             _fee = _getFundingFee(totalContributedToPortalFunding);
             ERC20lib.transfer(collateralType, fraactionDaoMultisig, _fee);
-            mint(address(this), valueToTokens(totalContributedToPortalFunding, 1));
+            mint(address(this), tokensToMint);
+            mintedTokens[portalFundingNumber] = tokensToMint;
             portalFundingResult[portalFundingNumber] = 1;
             totalContributedToFraactionHubInGhst += totalContributedToPortalFunding;
         } else {
@@ -1516,13 +1521,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
     }
 
     /// @notice an external function to end an auction after the timer has run out and transfer all the assets of the FrAactionHub to the winner
-    function endFinalAuction(
-        uint256[] calldata _extNftsId,  
-        uint256[] calldata _ext1155Id,
-        uint256[] calldata _ext1155Quantity,
-        address[] calldata _extNftsAddress, 
-        address[] calldata _ext1155Address
-    ) external nonReentrant {
+    function endFinalAuction() external nonReentrant {
         require(
             finalAuctionStatus == FinalAuctionStatus.ACTIVE, 
             "endFinalAuction: vault has already closed"
@@ -1542,61 +1541,80 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             target = winning;
             emit Won(winning, livePrice);
         }
-        uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
-        uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
-        ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
-        uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(address(this));
-        bool checkTickets;
-        for (uint i = 0; i < itemsStaking.length; i++) {
-            if (itemsStaking[i] != 0) {
-                checkTickets = true;
-                break;
+        if (!proposedTakeoverFrom[target]) {
+            uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
+            uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
+            ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
+            uint256[] memory itemsStaking = DiamondInterface(stakingContract).balanceOfAll(address(this));
+            bool checkTickets;
+            for (uint i = 0; i < itemsStaking.length; i++) {
+                if (itemsStaking[i] != 0) {
+                    checkTickets = true;
+                    break;
+                }
             }
-        }
-        if (realmsId.length > 0 && split == 0 || split == 1) {
-            transferRealms();
-        } else if (nftsId.length > 0 && split == 0 || split == 2) {
-            transferNfts();
-        } else if (itemsDiamond.length > 0 && split == 0 || 
-            split == 3 || 
-            checkTickets == true
-            ) {
-            transferItems();
-        } else if (_extNftsId.length > 0 && split == 0 || split == 4) {
-            transferExternalNfts(_extNftsAddress, _extNftsId);
-        } else if (_ext1155Id.length > 0 && split == 0 || split == 5) {
-            transferExternal1155(_ext1155Address, _ext1155Id, _ext1155Quantity);
-        } else if (_extErc20Value.length > 0 && split == 0 || split == 6) {
-            transferExternalErc20(_extErc20Address, _extErc20Value);
-        } else {
-            if (totalTreasuryInGhst > 0) ERC20lib.transferFrom(ghstContract, address(this), target, totalTreasuryInGhst);
-            if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
-            totalTreasuryInGhst = 0;
-            totalTreasuryInMatic = 0;
-            if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
-                mergerStatus = MergerStatus.DELETINGTOKENS;
+            if (realmsId.length > 0) {
+                transferRealms();
+            } else if (nftsId.length > 0) {
+                transferNfts();
+            } else if (checkTickets == true) {
+                transferItems();
+            } else if (!extNftsTransferred || split = 4) {
+                transferExternalNfts();
+                if (split == 0) extNftsTransferred = true;
+            } else if (!ext1155Transferred || split = 5) {
+                transferExternal1155();
+                if (split == 0) ext1155Transferred = true;
+            } else if (!extErc20Transferred || split = 6) {
+                transferExternalErc20();
+                if (split == 0) extErc20Transferred = true; 
             } else {
-                delete erc20Tokens;
-                delete nfts;
-                delete erc1155Tokens;
-                mergerStatus = MergerStatus.ENDED;
+                extNftsTransferred = false;
+                ext1155Transferred = false;
+                extErc20Transferred = false;
+                if (totalTreasuryInGhst > 0) ERC20lib.transferFrom(ghstContract, address(this), target, totalTreasuryInGhst);
+                if (totalTreasuryInMatic > 0) transferMaticOrWmatic(target, totalTreasuryInMatic);
+                currentBalanceInGhst -= totalTreasuryInGhst;
+                currentBalanceInMatic -= totalTreasuryInMatic;
+                totalTreasuryInGhst = 0;
+                totalTreasuryInMatic = 0;
+                if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
+                    mergerStatus = MergerStatus.DELETINGTOKENS;
+                } else {
+                    delete erc20Tokens;
+                    delete nfts;
+                    delete erc1155Tokens;
+                    mergerStatus = MergerStatus.ENDED;
+                }
             }
+        } else {
+            mergerStatus = MergerStatus.ENDED;
+        }
+        if (mergerStatus = MergerStatus.DELETINGTOKENS || mergerStatus = MergerStatus.ENDED) {
             finalAuctionStatus = FinalAuctionStatus.INACTIVE;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
             int residualGhst = bal - currentBalanceInGhst;
             int residualMatic = address(this).balance - currentBalanceInMatic;
+            uint256 exitFee = livePrice * ISettings(settingsContract).exitFee() / 1000;
+            residualProfit = livePrice  - exitFee;
+            uint256 ghstFinalAmount;
+            uint256 maticFinalAmount;
             if (exitInGhst) {
-                redeemedCollateral[ghstContract].push(livePrice + residualGhst);
-                if (collateralToRedeem[ghstContract] == 0) {
-                    collateralToRedeem[ghstContract] = true;
-                    collateralAvailable.push(ghstContract);
-                }
+                ERC20lib.transferFrom(ghstContract, address(this), fraactionDaoMultisig, exitFee);
+                ghstFinalAmount = residualProfit + residualGhst;
             } else {
-                redeemedCollateral[thisContract].push(livePrice + residualMatic);
-                if (collateralToRedeem[thisContract] == 0) {
-                    collateralToRedeem[thisContract] = true;
-                    collateralAvailable.push(thisContract);
-                }
+                transferMaticOrWmatic(fraactionDaoMultisig, exitFee);
+                maticFinalAmount = residualProfit + residualMatic;
+            }
+            redeemedCollateral[ghstContract].push(ghstFinalAmount);
+            if (collateralToRedeem[ghstContract] == 0) {
+                collateralToRedeem[ghstContract] = true;
+                collateralAvailable.push(ghstContract);
+            }
+            redeemedCollateral[thisContract].push(maticFinalAmount);
+            if (collateralToRedeem[thisContract] == 0) {
+                collateralToRedeem[thisContract] = true;
+                collateralAvailable.push(thisContract);
             }
             emit MergerFinalized(target);
         }
@@ -1660,16 +1678,11 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                     break;
             }
         }
-        if (realmsId.length > 0 && split == 0 || split == 1) {
+        if (realmsId.length > 0) {
             transferRealms();
-        } else if (nftsId.length > 0 && split == 0 || split == 2) {
+        } else if (nftsId.length > 0) {
             transferNfts();
-        } else if (
-            itemsDiamond.length > 0 && split == 0 || 
-            split == 3 || 
-            checkTickets == true
-            ) 
-        {
+        } else if (checkTickets == true) {
             transferItems();
         } else if (!extNftsTransferred || split = 4) {
             transferExternalNfts();
@@ -1826,12 +1839,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         returns (uint256 _tokens)
     {
         if (exitInGhst == _inGhst) {
-            _tokens = votingTokens / fundingTotal * _value * TOKEN_SCALE;
+            _tokens = totalSupply() / fundingTotal * _value * TOKEN_SCALE;
         } else {
             if (exitInGhst) {
-                _tokens = votingTokens / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(0) / 10**8)) * _value * TOKEN_SCALE;
+                _tokens = totalSupply() / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(0) / 10**8)) * _value * TOKEN_SCALE;
             } else {
-                _tokens = votingTokens / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(1) / 10**8)) * _value * TOKEN_SCALE;
+                _tokens = totalSupply() / (fundingTotal * (ISettings(settingsContract).convertFundingPrice(1) / 10**8)) * _value * TOKEN_SCALE;
             }
         }
     }
@@ -1892,12 +1905,12 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 if (isBid(_fundingNumber)) {
                     uint256 _totalUsedForBid = _totalGhstOrMaticUsedForBid(_contributor, _fundingNumber);
                     if (_totalUsedForBid > 0) {
-                        _tokenAmount = valueToTokens(_totalUsedForBid, fundingInGhst[_fundingNumber]);
+                        _tokenAmount = _totalUsedForBid / finalBidAmount[fundingNumber] * mintedTokens[_fundingNumber];
                     }
                     // the rest of the contributor's GHST or MATIC should be returned
                     _ghstOrMaticAmount = contribution - _totalUsedForBid;
                 } else {
-                    _tokenAmount = valueToTokens(contribution, fundingInGhst[_fundingNumber]);
+                    _tokenAmount = contribution / contributedToFunding[_fundingNumber] * mintedTokens[_fundingNumber];
                 }
                 if (newOwner[_contributor] == true) {
                     ownersAddress.push(_contributor);
@@ -1938,7 +1951,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         uint256 contribution = ownerContributedToPortalFunding[_contributor][_portalFundingNumber];
         if (contribution > 0) {  
             if (_successPortalFunding == true) {
-                _tokenAmount = valueToTokens(contribution, 1);
+                _tokenAmount = contribution / contributedToPortalFunding[_portalFundingNumber] * mintedTokens[_portalFundingNumber];
             } else {
                 _collateralAmount = ownerContributedCollateral[_contributor][_portalFundingNumber];
                 _collateralType = ownerCollateralType[_contributor][_portalFundingNumber];
