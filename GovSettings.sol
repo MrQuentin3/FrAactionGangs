@@ -356,6 +356,7 @@ contract Settings is Ownable, ISettings {
         );
         hubId++;
         fraactionHubRegistry[_fraactionHubAddress] = hubId;
+        isHub[_fraactionHubAddress] = true;
         idToAddress[hubId] = _fraactionHubAddress;
         timeDeployed[_fraactionHubAddress] = block.timestamp;
         emit NewRegisteredFraactionHub(_fraactionHubAddress);

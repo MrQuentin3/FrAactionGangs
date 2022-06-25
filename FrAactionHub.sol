@@ -252,122 +252,158 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
 
     // ======== External: Donation =========
 
-    function donateFungibleTokens(address _tokenAddress, uint256 _value) external payable {
-        if (_tokenAddress == ghstContract) {
-            ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
-            totalTreasuryInGhst += _value;
-        } else if (_tokenAddress == address(this) && msg.value > 0) {
-            totalTreasuryInMatic += msg.value;
-        } else {
-            ERC20lib.transferFrom(_tokenAddress, msg.sender, address(this), _value);
-            if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
-                erc20tokens.push(_tokenAddress);
-                erc20Index[_tokenAddress] = erc20tokens.length - 1;
+    function donateFungibleTokens(address[] calldata _tokenAddress, uint256[] calldata _value) external payable {
+        require(
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "donateFungibleTokens: too many tokens transferred for a single call"
+        );
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            if (_tokenAddress == ghstContract) {
+                ERC20lib.transferFrom(_tokenAddress[i], msg.sender, address(this), _value[i]);
+                totalTreasuryInGhst += _value[i];
+            } else if (_tokenAddress[i] == address(this) && msg.value > 0) {
+                totalTreasuryInMatic += msg.value;
+            } else {
+                ERC20lib.transferFrom(_tokenAddress[i], msg.sender, address(this), _value[i]);
+                if (ownedErc20[_tokenAddress[i]] == 0 && erc20Index[_tokenAddress[i]] == 0) {
+                    erc20tokens.push(_tokenAddress[i]);
+                    erc20Index[_tokenAddress[i]] = erc20tokens.length - 1;
+                }
+                ownedErc20[_tokenAddress[i]] += value[i];
             }
-            ownedErc20[_tokenAddress] += value;
         }
         emit DonatedErc20(_tokenAddress, _value);
     }
 
-    function donateExtNft(address _tokenAddress, uint256 _id) external {
+    function donateExtNfts(address[] calldata _tokenAddress, uint256[] calldata _id) external {
         require(
-            _tokenAddress != diamondContract &&
-            _tokenAddress != realmsContract,
-            "donateExtNft: Aavegotchi NFTs can be donated to the FrAactionHub with a simple ERC721 transfer"
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "donateExtNfts: too many tokens transferred for a single call"
         );
-        ERC721Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id);
-        if (ownedErc721[_tokenAddress][_id] == 0) {
-            Nft memory newNft = Nft(_tokenAddress, _id);
-            nfts.push(newNft);
-            nftsIndex[_tokenAddress] = nfts.length - 1;
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            require(
+                _tokenAddress[i] != diamondContract &&
+                _tokenAddress[i] != realmsContract,
+                "donateExtNfts: Aavegotchi NFTs can be donated to the FrAactionHub with a simple ERC721 transfer"
+            );
+            ERC721Upgradeable(_tokenAddress[i]).transferFrom(_tokenAddress[i], msg.sender, address(this), _id[i]);
+            if (ownedErc721[_tokenAddress[i]][_id[i]] == 0) {
+                Nft memory newNft = Nft(_tokenAddress[i], _id[i]);
+                nfts.push(newNft);
+                nftsIndex[_tokenAddress[i]] = nfts.length - 1;
+            }
+            ownedNfts[_tokenAddress[i]][_id[i]] = true;
         }
-        ownedNfts[_tokenAddress][_id] = true;
         emit DonatedExtNft(_tokenAddress, _id);
     }
 
-    function donateErcExt1155(address _tokenAddress, uint256 _id, uint256 _value) external {
+    function donateErcExt1155(address[] calldata _tokenAddress, uint256[] calldata _id, uint256[] calldata _value) external {
         require(
-            _tokenAddress != diamondContract &&
-            _tokenAddress != stakingContract,
-            "donateErcExt1155: Aavegotchi items can be donated to the FrAactionHub with a simple ERC1155 transfer"
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "donateErcExt1155: too many tokens transferred for a single call"
         );
-        ERC1155Upgradeable(_tokenAddress).transferFrom(_tokenAddress, msg.sender, address(this), _id, _value);
-        if (ownedErc1155[_tokenAddress][_id] == 0) {
-            Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
-            erc1155Tokens.push(newErc1155);
-            erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            require(
+                _tokenAddress[i] != diamondContract &&
+                _tokenAddress[i] != stakingContract,
+                "donateErcExt1155: Aavegotchi items can be donated to the FrAactionHub with a simple ERC1155 transfer"
+            );
+            ERC1155Upgradeable(_tokenAddress[i]).transferFrom(_tokenAddress[i], msg.sender, address(this), _id[i], _value[i]);
+            if (ownedErc1155[_tokenAddress[i]][_id[i]] == 0) {
+                Erc1155 memory newErc1155 = Erc1155(_tokenAddress[i], _id[i], _value[i]);
+                erc1155Tokens.push(newErc1155);
+                erc1155Index[_tokenAddress[i]] = erc1155Tokens.length - 1;
+            }
+            ownedErc1155[_tokenAddress[i]][_id[i]] += _value[i];
         }
-        ownedErc1155[_tokenAddress][_id] += _value;
         emit DonatedExtErc1155(_tokenAddress, _id, _value);
     }
 
-    function acknowledgeFungibleTokens(address _tokenAddress) external {
-        uint256 balance = IERC721Upgradeable(_tokenAddress).balanceOf(address(this));
-        uint256 value;
-        if (_tokenAddress == ghstContract) {
-            require(
-                balance >= currentBalanceInGhst,
-                "acknowledgeFungibleTokens: insufficient GHST balance"
-            );
-            value = balance - currentBalanceInGhst;
-            totalTreasuryInGhst += value;
-        } else if (_tokenAddress == address(this) && msg.value > 0) {
-            require(
-                address(this).balance >= currentBalanceInMatic,
-                "acknowledgeFungibleTokens: insufficient MATIC balance"
-            );
-            value = balance - currentBalanceInMatic;
-            totalTreasuryInMatic += value;
-        } else {
-            require(
-                balance >= ownedErc20[_tokenAddress],
-                "acknowledgeFungibleTokens: insufficient ERC20 token balance"
-            );
-            if (ownedErc20[_tokenAddress] == 0 && erc20Index[_tokenAddress] == 0) {
-                erc20Tokens.push(_tokenAddress);
-                erc20Index[_tokenAddress] = erc20tokens.length - 1;
+    function acknowledgeFungibleTokens(address[] calldata _tokenAddress) external {
+        require(
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "acknowledgeFungibleTokens: too many tokens transferred for a single call"
+        );
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            uint256 balance = IERC721Upgradeable(_tokenAddress[i]).balanceOf(address(this));
+            uint256 value;
+            if (_tokenAddress[i] == ghstContract) {
+                require(
+                    balance >= currentBalanceInGhst,
+                    "acknowledgeFungibleTokens: insufficient GHST balance"
+                );
+                value = balance - currentBalanceInGhst;
+                totalTreasuryInGhst += value;
+            } else if (_tokenAddress[i] == address(this) && msg.value > 0) {
+                require(
+                    address(this).balance >= currentBalanceInMatic,
+                    "acknowledgeFungibleTokens: insufficient MATIC balance"
+                );
+                value = balance - currentBalanceInMatic;
+                totalTreasuryInMatic += value;
+            } else {
+                require(
+                    balance >= ownedErc20[_tokenAddress[i]],
+                    "acknowledgeFungibleTokens: insufficient ERC20 token balance"
+                );
+                if (ownedErc20[_tokenAddress[i]] == 0 && erc20Index[_tokenAddress[i]] == 0) {
+                    erc20Tokens.push(_tokenAddress[i]);
+                    erc20Index[_tokenAddress[i]] = erc20tokens.length - 1;
+                }
+                value = balance - ownedErc20[_tokenAddress[i]]
+                ownedErc20[_tokenAddress[i]] += value;
             }
-            value = balance - ownedErc20[_tokenAddress]
-            ownedErc20[_tokenAddress] += value;
         }
         emit AcknwoledgedExtErc20(_tokenAddress, value);
     }
 
-    function acknowledgeExtNft(address _tokenAddress, uint256 _id) external {
+    function acknowledgeExtNfts(address[] calldata _tokenAddress, uint256[] calldata _id) external {
         require(
-            _tokenAddress != diamondContract &&
-            _tokenAddress != realmsContract,
-            "acknowledgeExtNft: Aavegotchi NFTs are natively acknowledged by the FrAactionHub"
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "acknowledgeExtNfts: too many tokens transferred for a single call"
         );
-        require(
-            ERC721Upgradeable(_tokenAddress).ownerOf(_id) == address(this),
-            "acknowledgeExtNft: FrAactionHub not owner of this NFT"
-        );
-        if (!ownedErc721[_tokenAddress][_id]) {
-            Nft memory newNft = Nft(_tokenAddress, _id);
-            nfts.push(newNft);
-            nftsIndex[_tokenAddress] = nfts.length - 1;
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            require(
+                _tokenAddress[i] != diamondContract &&
+                _tokenAddress[i] != realmsContract,
+                "acknowledgeExtNfts: Aavegotchi NFTs are natively acknowledged by the FrAactionHub"
+            );
+            require(
+                ERC721Upgradeable(_tokenAddress[i]).ownerOf(_id[i]) == address(this),
+                "acknowledgeExtNfts: FrAactionHub not owner of this NFT"
+            );
+            if (!ownedErc721[_tokenAddress[i]][_id[i]]) {
+                Nft memory newNft = Nft(_tokenAddress[i], _id[i]);
+                nfts.push(newNft);
+                nftsIndex[_tokenAddress[i]] = nfts.length - 1;
+            }
+            ownedNfts[_tokenAddress[i]][_id[i]] = true;
         }
-        ownedNfts[_tokenAddress][_id] = true;
         emit AcknowledgedExtNft(_tokenAddress, _id);
     }
     
-    function acknowledgeExt1155(address _tokenAddress, uint256 _id, uint256 _value) external {
+    function acknowledgeExt1155(address[] calldata _tokenAddress, uint256[] calldata _id, uint256[] calldata _value) external {
         require(
-            _tokenAddress != diamondContract &&
-            _tokenAddress != stakingContract,
-            "acknowledgeExtErc1155: Aavegotchi items are natively acknowledged by the FrAactionHub"
+            _tokenAddress.length =< ISettings(settingsContract).MaxTransferLimit(),
+            "acknowledgeExt1155: too many tokens transferred for a single call"
         );
-        require(
-            ERC1155Upgradeable(_tokenAddress).balanceOf(address(this), _id) == _value,
-            "acknowledgeExtErc1155: FrAactionHub not owner of this NFT"
-        );
-        if (ownedErc1155[_tokenAddress][_id] == 0) {
-            Erc1155 memory newErc1155 = Erc1155(_tokenAddress, _id, _value);
-            erc1155Tokens.push(newErc1155);
-            erc1155Index[_tokenAddress] = erc1155Tokens.length - 1;
+        for (uint i = 0; i < _tokenAddress.length; i++) {
+            require(
+                _tokenAddress[i] != diamondContract &&
+                _tokenAddress[i] != stakingContract,
+                "acknowledgeExtErc1155: Aavegotchi items are natively acknowledged by the FrAactionHub"
+            );
+            require(
+                ERC1155Upgradeable(_tokenAddress[i]).balanceOf(address(this), _id[i]) == _value[i],
+                "acknowledgeExtErc1155: FrAactionHub not owner of this NFT"
+            );
+            if (ownedErc1155[_tokenAddress[i]][_id[i]] == 0) {
+                Erc1155 memory newErc1155 = Erc1155(_tokenAddress[i], _id[i], _value[i]);
+                erc1155Tokens.push(newErc1155);
+                erc1155Index[_tokenAddress[i]] = erc1155Tokens.length - 1;
+            }
+            ownedErc1155[_tokenAddress[i]][_id[i]] += _value[i];
         }
-        ownedErc1155[_tokenAddress][_id] += _value;
         emit AcknwoledgedExtErc1155(_tokenAddress, _id, _value);
     }
     
@@ -1011,11 +1047,14 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
                 claimedCounter = 0;
                 firstRound = true;
                 delete ownersAddress;
-                if (proposedTakeoverFrom[target]) {
+                if (proposedTakeoverFrom[target] || 
+                    finalAuctionStatus == FinalAuctionStatus.ACTIVE && takenover
+                ) {
                     mergerStatus == MergerStatus.TAKINGOVER;
                 } else {
                     mergerStatus == MergerStatus.INACTIVE;
                 }
+                finalAuctionStatus = FinalAuctionStatus.INACTIVE;
                 emit FinalClaim(mergerStatus);
             }
         }
@@ -1034,7 +1073,9 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         finalizeDemerger();
         if (split == 0) {
             delete proposedTakeoverFrom[target];
+            delete takenover;
             mergerStatus == MergerStatus.INACTIVE;
+            FraactionInterface(target).finalizeTakeover();
             emit Takenover(address(this));
         }
     }
@@ -1286,6 +1327,7 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         } else {
             fundingResult[fundingNumber] = 0;
         }
+        if (takingover) mergerStatus = MergerStatus.WAITINGTAKEOVER;
         fundingStatus = FundingStatus.INACTIVE;
         // set the contract status & emit result
         emit FinalizedBid(auctionStatus, fee, submittedBid);
@@ -1541,7 +1583,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             target = winning;
             emit Won(winning, livePrice);
         }
-        if (!proposedTakeoverFrom[target]) {
+        if (!takenover) {
+            transferToHub = ISettings(settingsContract).isHub(target);
             uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
             uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
             ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
@@ -1591,7 +1634,6 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
             mergerStatus = MergerStatus.ENDED;
         }
         if (mergerStatus = MergerStatus.DELETINGTOKENS || mergerStatus = MergerStatus.ENDED) {
-            finalAuctionStatus = FinalAuctionStatus.INACTIVE;
             uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
             int residualGhst = bal - currentBalanceInGhst;
             int residualMatic = address(this).balance - currentBalanceInMatic;
@@ -1664,7 +1706,8 @@ contract FraactionHub is FraactionSPDAO, ReentrancyGuardUpgradeable {
         );
         if (mergerStatus == MergerStatus.INACTIVE) {
             target = msg.sender;
-            mergerStatus = MergerStatus.ACTIVE
+            mergerStatus = MergerStatus.ACTIVE;
+            transferToHub = ISettings(settingsContract).isHub(target);
             emit MergerInitiated(target);
         }
         uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));

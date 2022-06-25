@@ -983,6 +983,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 demergerStatus = DemergerStatus.ACTIVE;
                 votedIndex = _idToVoteFor;
                 target = transferTo[_idToVoteFor];
+                transferToHub = ISettings(settingsContract).isHub(target);
                 emit TransferActive(target);
             }
             if (!realmsTransferred || split = 1) {
@@ -1033,6 +1034,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         delete proposedMergerTo[target];
         delete proposedValuation;
         delete proposedValuationFrom;
+        delete proposedTakeover;
         if (!proposedTakeoverFrom[target]) {
             if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
                 mergerStatus = MergerStatus.DELETINGTOKENS;
@@ -1042,6 +1044,8 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 delete erc1155Tokens;
                 mergerStatus = MergerStatus.ENDED;
             }
+        } else {
+            mergerStatus = MergerStatus.ENDED;
         }
         emit ConfirmedFinalizedMerger(mergerStatus);
     }
@@ -1106,35 +1110,37 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             fundingStatus == FundingStatus.INACTIVE, 
             "voteForMerger: FrAactionHub not fractionalized yet"
         );
-        require(
-            ISettings(settingsContract).fraactionHubRegistry(_mergerTarget) > 0,
-            "voteForMerger: not a registered FrAactionHub contract"
-        );
+        if (_mergerTarget != address(0)) {
+            require(
+                ISettings(settingsContract).isHub(_mergerTarget),
+                "voteForMerger: not a registered FrAactionHub contract"
+            );
+        }
         require(
             balanceOf(msg.sender) > 0 ||
             FraactionInterface(target).balanceOf(msg.sender) > 0, 
             "voteForMerger: user not an owner of the FrAactionHub"
         );
-        require(
-            _extNftsId.length == _extNftsAddress.length &&
-            _extErc20Address.length == _extErc20Value.length &&
-            _ext1155Id.length == _ext1155Quantity.length &&
-            _ext1155Quantity.length == _ext1155Address.length,
-            "voteForMerger: each token ID or value needs a corresponding token address"
-        );
         if (merging == false) {
-            if (block.timestamp > mergerEnd[_mergerTarget]) {
+            if (block.timestamp > mergerEnd[_mergerTarget] && mergerEnd[_mergerTarget] != 0) {
                 mergerEnd[_mergerTarget] = 0;
                 if (initiatedMergerFrom[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
                     delete initiatiedMergerFrom[_mergerTarget];
+                    delete proposedValuationFrom[_mergerTarget];
+                    delete proposedTakeoverFrom[_mergerTarget];
                 } else if (proposedMergerTo[_mergerTarget] && mergerStatus == MergerStatus.ACTIVE) {
                     mergerStatus = MergerStatus.INACTIVE;
                     delete proposedMergerTo[_mergerTarget];
+                    delete proposedValuation[_mergerTarget];
+                    delete proposedTakeover[_mergerTarget];
                 } else if (proposedMergerFrom[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
                     delete proposedMergerFrom[_mergerTarget];
+                    delete proposedValuationFrom[_mergerTarget];
+                    delete proposedTakeoverFrom[_mergerTarget];
                 } else {
-                    delete initiatedMergerTo[_mergerTarget];
                     mergerStatus = MergerStatus.INACTIVE;
+                    delete proposedValuation[_mergerTarget];
+                    delete proposedTakeover[_mergerTarget];
                 }
                 delete targetReserveTotal[_mergerTarget];
                 delete votesTotalMerger[_mergerTarget];
@@ -1171,6 +1177,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         if (votesTotalMerger[_mergerTarget] * 1000 >= ISettings(settingsContract).minMergerVotePercentage() * totalSupply()) {
             if (initiatedMergerFrom[_mergerTarget] == true) {
+                bool success;
                 if (!proposedMergerTo[_mergerTarget] && mergerStatus == MergerStatus.INACTIVE) {
                     nonTransferredAssets = 0;
                     target = _mergerTarget;
@@ -1180,6 +1187,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     emit MergerInitiated(_mergerTarget);
                 }
                 if (!proposedTakeoverFrom[target]) {
+                    transferToHub = true;
                     uint256[] memory realmsId = DiamondInterface(realmsContract).tokenIdsOfOwner(address(this));
                     uint32[] memory nftsId = DiamondInterface(diamondContract).tokenIdsOfOwner(address(this));
                     ItemIdIO[] memory itemsDiamond = DiamondInterface(diamondContract).itemBalances(address(this));
@@ -1229,11 +1237,9 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                             collateralToRedeem[thisContract] = true;
                             collateralAvailable.push(thisContract);
                         }
+                        success = true;
                     }
-                    mergerStatus == MergerStatus.ASSETSTRANSFERRED;
-                    FraactionInterface(target).confirmAssetsTransferred();
-                    emit MergerAssetsTransferred(address(this));
-                } else {
+                if (proposedTakeoverFrom[target] || success) {
                     mergerStatus == MergerStatus.ASSETSTRANSFERRED;
                     FraactionInterface(target).confirmAssetsTransferred();
                     emit MergerAssetsTransferred(address(this));
@@ -1333,13 +1339,17 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             totalTreasuryInMatic += bal;
             currentBalanceInMatic += bal;
             FraactionInterface(target).confirmFinalizedMerger();
-            delete initiatedMergerTo[target];
             delete proposedMergerFrom[target];
             delete targetReserveTotal[target];
-            delete proposedTakeoverFrom;
-            delete proposedValuation;
-            delete proposedValuationFrom;
-            mergerStatus = MergerStatus.INACTIVE;
+            delete proposedValuation[target];
+            delete proposedValuationFrom[target];
+            if (proposedTakeover[target] || proposedTakeoverFrom[target]) {
+                mergerStatus = MergerStatus.WAITINGTAKEOVER;
+            } else {
+                mergerStatus = MergerStatus.INACTIVE;
+            }
+            delete proposedTakeoverFrom[target];
+            delete proposedTakeover[target];
             emit MergerFinalized(target);
         }
         if (endIndex > ownersFrom.length) endIndex = ownersFrom.length;
@@ -1621,10 +1631,26 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         if (endIndex > erc20Value.length) endIndex = erc20Value.length;
         if (startIndex > erc20Value.length) return;
-        uint256 assetCounter;
         address replace;
+        bool success;
         for (uint i = startIndex; i < endIndex; i++) {
-            try LibERC20.transferFrom(erc20Address[i], addresse(this), target, erc20Value[i]) {
+            if (transferToHub) {
+                try FraactionInterface(target).donateFungibleTokens(erc20Address[i], erc20Value[i]) {
+                    success = true;
+                } catch {
+                    nonTransferredAssets++;
+                    emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
+                }
+            } else {
+                try LibERC20.transferFrom(erc20Address[i], addresse(this), target, erc20Value[i]) {
+                    success = true;
+                } catch {
+                    nonTransferredAssets++;
+                    emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
+                }
+            }
+            if (success) {
+                if (mergerStatus == MergerStatus.ACTIVE) delete erc20Index[erc20Address[i]];
                 ownedErc20[erc20Address[i]] -= erc20Value[i];
                 if (ownedErc20[erc20Address[i]] == 0 && demergerStatus == DemergerStatus.ACTIVE) {
                     replace = erc20Tokens[erc20Tokens.length - 1];
@@ -1633,13 +1659,9 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     delete erc20Index[erc20Address[i]];
                     erc20Tokens.pop();
                 }
-                if (mergerStatus == MergerStatus.ACTIVE) delete erc20Index[erc20Address[i]];
-            } catch {
-                nonTransferredAssets++;
-                emit NonTransferredErc20(erc20Address[i], erc20Value[i]);
+                success = false;
             }
         }
-        if (mergerStatus == MergerStatus.ACTIVE) extAssetsTansferred += assetCounter; 
     }
 
     function transferExternalNfts() internal {
@@ -1694,11 +1716,27 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         }
         if (endIndex > nftsId.length) endIndex = nftsId.length;
         if (startIndex > nftsId.length) return;
-        uint256 assetCounter;
         address replace;
+        bool success;
         for (uint i = startIndex; i < endIndex; i++) {
-            try IERC721Upgradeable(nftsAddress[i]).safeTransferFrom(address(this), target, nftsId[i]) {
+            if (transferToHub) {
+                try FraactionInterface(target).donateExtNfts(nftAddress[i], nftsId[i]) {
+                    success = true;
+                } catch {
+                    nonTransferredAssets++;
+                    emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
+                }
+            } else {
+                try IERC721Upgradeable(nftsAddress[i]).safeTransferFrom(address(this), target, nftsId[i]) {
+                    success = true;
+                } catch {
+                    nonTransferredAssets++;
+                    emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
+                }
+            }
+            if (success) {
                 delete ownedNfts[nftAddress[i]][nftsId[i]];
+                if (mergerStatus == MergerStatus.ACTIVE) delete nftsIndex[nftsAddress[i]];
                 if (demergerStatus == DemergerStatus.ACTIVE) {
                     replace = nfts[nfts.length - 1];
                     nfts[nftsIndex[nftsAddress[i]]] = replace;
@@ -1706,10 +1744,6 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     delete nftsIndex[nftsAddress[i]];
                     nfts.pop();
                 }
-                if (mergerStatus == MergerStatus.ACTIVE) delete nftsIndex[nftsAddress[i]];
-            } catch {
-                nonTransferredAssets++;
-                emit NonTransferredNfts(nftsAddress[i], nftsId[i]);
             }
         }
     }
@@ -1781,15 +1815,13 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                 if (address1155[i] == address1155[j]) {
                     ownedErc1155[address1155[j]][ids1155[j]] -= quantity1155[j];
                     if (demergerStatus == DemergerStatus.ACTIVE && ownedErc1155[address1155[j]][ids1155[j]] == 0) {
-                        erc1155Tokens[j] = erc1155Tokens[erc1155Tokens.length - 1];
-                        erc1155Tokens.pop();
                         replace = erc1155Tokens[erc1155Tokens.length - 1];
-                        erc1155Tokens[erc1155Index[address1155[i]]] = replace;
+                        erc1155Tokens[erc1155Index[address1155[j]]] = replace;
                         erc1155Index[replace] = erc1155Index[address1155[j]];
-                        delete nftsIndex[address1155[j]];
+                        delete erc1155Index[address1155[j]];
                         erc1155Tokens.pop();
                     }
-                    if (mergerStatus == MergerStatus.ACTIVE) delete erc1155Index[address1155[i]];
+                    if (mergerStatus == MergerStatus.ACTIVE) delete erc1155Index[address1155[j]];
                     indexRedundancy[redundancyCounter] = j;
                     delete address1155[j];
                     redundancyCounter++;
@@ -1805,20 +1837,32 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                     batchQuantity[indexCounter] = quantity1155[indexRedundancy[k]];
                     indexCounter++;
                 }
-                try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
+                bool success;
+                if (transferToHub) {
+                    try FraactionInterface(target).donateErcExt1155(address1155[i], batchIds, batchQuantity) {
+                        success = true;
+                    } catch {
+                        nonTransferredAssets += redundancyCounter;
+                        emit NonTransferredErc1155(address1155[i], batchIds, batchQuantity);
+                    }
+                } else {
+                    try IERC1155Upgradeable(address1155[i]).safeBatchTransferFrom(address(this), target, batchIds, batchQuantity, new bytes(0)) {
+                        success = true;
+                    } catch {
+                        nonTransferredAssets += redundancyCounter;
+                        emit NonTransferredErc1155(address1155[i], batchIds, batchQuantity);
+                    }
+                }
+                if (success) {
                     ownedErc1155[address1155[i]][ids1155[i]] -= quantity1155[i];
                     if (demergerStatus == DemergerStatus.ACTIVE && ownedErc1155[address1155[i]][ids1155[i]] == 0) {
-                        erc1155Tokens[i] = erc1155Tokens[erc1155Tokens.length - 1];
-                        erc1155Tokens.pop();
                         replace = erc1155Tokens[erc1155Tokens.length - 1];
                         erc1155Tokens[erc1155Index[address1155[i]]] = replace;
                         erc1155Index[replace] = erc1155Index[address1155[i]];
-                        delete nftsIndex[address1155[i]];
+                        delete erc1155Index[address1155[i]];
                         erc1155Tokens.pop();
                     }
-                } catch {
-                    nonTransferredAssets += redundancyCounter;
-                    emit NonTransferredErc1155(address1155[i], batchIds, batchQuantity);
+                    if (mergerStatus == MergerStatus.ACTIVE) delete erc1155Index[address1155[i]];
                 }
                 redundancyCounter = 0;
             }
@@ -1971,6 +2015,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             target = abi.decode(returnData, (address));
             votedIndex = _idToVoteFor;
             demergerStatus = DemergerStatus.ACTIVE;
+            transferToHub = true;
             emit DemergerActive(target, demergerName[_idToVoteFor], demergerSymbol[_idToVoteFor]);
             claimReward(msg.sender);
         }
@@ -2076,7 +2121,20 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
             "confirmDemerger: demerger is not active
         );
         demergerStatus = DemergerStatus.ASSETSTRANSFERRED;
-        DemergerAssetsTransferred(address(this));
+        emit ConfirmedDemerger(address(this));
+    }
+
+    function finalizeTakeover() external {
+        require(
+            msg.sender == target,
+            "finalizeTakeover: caller is not the demerger parent contract"
+        );
+        require(
+            mergerStatus == MergerStatus.WAITINGTAKEOVER, 
+            "finalizeTakeover: demerger is not active
+        );
+        mergerStatus = MergerStatus.INACTIVE;
+        emit FinalizedTakeover(address(this));
     }
 
     function ownershipCheck(
