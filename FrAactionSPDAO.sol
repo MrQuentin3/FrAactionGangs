@@ -1035,18 +1035,7 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
         delete proposedValuation;
         delete proposedValuationFrom;
         delete proposedTakeover;
-        if (!proposedTakeoverFrom[target]) {
-            if (erc20Tokens.length + nfts.length + erc1155Tokens.length > maxExtTokensLength) {
-                mergerStatus = MergerStatus.DELETINGTOKENS;
-            } else {
-                delete erc20Tokens;
-                delete nfts;
-                delete erc1155Tokens;
-                mergerStatus = MergerStatus.ENDED;
-            }
-        } else {
-            mergerStatus = MergerStatus.ENDED;
-        }
+        mergerStatus = MergerStatus.ENDED;
         emit ConfirmedFinalizedMerger(mergerStatus);
     }
     
@@ -1227,16 +1216,21 @@ contract FraactionSPDAO is ERC20Upgradeable, ERC721HolderUpgradeable, ERC1155Hol
                         uint256 bal = ERC20Upgradeable(ghstContract).balanceOf(address(this));
                         residualGhst = bal - currentBalanceInGhst;
                         residualMatic = address(this).balance - currentBalanceInMatic;
-                        redeemedCollateral[ghstContract].push(residualGhst);
-                        if (collateralToRedeem[ghstContract] == 0) {
-                            collateralToRedeem[ghstContract] = true;
-                            collateralAvailable.push(ghstContract);
+                        if (residualGhst > 0) {
+                            redeemedCollateral[ghstContract].push(residualGhst);
+                            if (collateralToRedeem[ghstContract] == 0) {
+                                collateralToRedeem[ghstContract] = true;
+                                collateralAvailable.push(ghstContract);
+                            }
                         }
-                        redeemedCollateral[thisContract].push(residualMatic);
-                        if (collateralToRedeem[thisContract] == 0) {
-                            collateralToRedeem[thisContract] = true;
-                            collateralAvailable.push(thisContract);
+                        if (residualMatic > 0) {
+                            redeemedCollateral[thisContract].push(residualMatic);
+                            if (collateralToRedeem[thisContract] == 0) {
+                                collateralToRedeem[thisContract] = true;
+                                collateralAvailable.push(thisContract);
+                            }
                         }
+                        if (residualGhst > 0 || residualMatic > 0) allCollateralClaimed = false;
                         success = true;
                     }
                 if (proposedTakeoverFrom[target] || success) {
